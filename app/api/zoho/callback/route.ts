@@ -1,41 +1,57 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+const STATE_COOKIE = "zoho_oauth_state";
+
+function clearOAuthState(response: NextResponse): NextResponse {
+  response.cookies.set(STATE_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/api/zoho/callback",
+    maxAge: 0,
+  });
+  return response;
+}
 
 /**
  * GET /api/zoho/callback
  *
- * Zoho redirects here after the user approves access on Zoho's login page.
- * This route exchanges the one-time authorization code for an access token
- * and a refresh token — entirely server-side so secrets stay on the server.
- *
- * Security rule: full token values are NEVER logged or returned to the browser.
- * Only boolean receipt status and expires_in are logged.
- *
- * Required environment variables:
- *   ZOHO_CLIENT_ID
- *   ZOHO_CLIENT_SECRET
- *   ZOHO_REDIRECT_URI
- *   ZOHO_ACCOUNTS_BASE_URL
+ * Validates OAuth state, exchanges the one-time code, reads Zoho account
+ * metadata, and stores the connection in Supabase. It never reads emails.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
-  const code = searchParams.get("code");
+  const receivedState = searchParams.get("state");
+  const expectedState = request.cookies.get(STATE_COOKIE)?.value;
 
-  // Zoho sends an error param if the user denied access or something went wrong.
-  const zohoError = searchParams.get("error");
-  if (zohoError) {
-    console.error("[Zoho OAuth] Zoho returned an error:", zohoError);
-    return NextResponse.json(
-      { error: `Zoho returned an error: ${zohoError}` },
-      { status: 400 }
+  if (!receivedState || !expectedState || receivedState !== expectedState) {
+    return clearOAuthState(
+      NextResponse.json(
+        { error: "Invalid OAuth state. Please start the login flow again." },
+        { status: 400 },
+      ),
     );
   }
 
-  // The authorization code is required to proceed.
+  const zohoError = searchParams.get("error");
+  if (zohoError) {
+    console.error("[Zoho OAuth] Zoho returned an error:", zohoError);
+    return clearOAuthState(
+      NextResponse.json(
+        { error: `Zoho returned an error: ${zohoError}` },
+        { status: 400 },
+      ),
+    );
+  }
+
+  const code = searchParams.get("code");
   if (!code) {
-    console.error("[Zoho OAuth] No authorization code received from Zoho.");
-    return NextResponse.json(
-      { error: "Missing authorization code. Please try the login flow again." },
-      { status: 400 }
+    return clearOAuthState(
+      NextResponse.json(
+        { error: "Missing authorization code. Please try the login flow again." },
+        { status: 400 },
+      ),
     );
   }
 
@@ -43,90 +59,231 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const clientSecret = process.env.ZOHO_CLIENT_SECRET;
   const redirectUri = process.env.ZOHO_REDIRECT_URI;
   const accountsBaseUrl = process.env.ZOHO_ACCOUNTS_BASE_URL;
+  const mailBaseUrl = process.env.ZOHO_MAIL_BASE_URL;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  // Guard: all four env vars must be present to exchange the code.
-  if (!clientId || !clientSecret || !redirectUri || !accountsBaseUrl) {
-    console.error(
-      "[Zoho OAuth] Missing environment variables for token exchange."
-    );
-    return NextResponse.json(
-      {
-        error:
-          "Zoho OAuth is not fully configured on the server. " +
-          "Check ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REDIRECT_URI, " +
-          "and ZOHO_ACCOUNTS_BASE_URL.",
-      },
-      { status: 500 }
+  if (
+    !clientId ||
+    !clientSecret ||
+    !redirectUri ||
+    !accountsBaseUrl ||
+    !mailBaseUrl ||
+    !supabaseUrl ||
+    !supabaseServiceRoleKey
+  ) {
+    console.error("[Zoho OAuth] Missing server environment variables.");
+    return clearOAuthState(
+      NextResponse.json(
+        { error: "Zoho OAuth or Supabase is not configured on the server." },
+        { status: 500 },
+      ),
     );
   }
-
-  // Exchange the one-time code for access + refresh tokens.
-  // This POST goes from our server to Zoho — never through the browser.
-  const tokenUrl = `${accountsBaseUrl}/oauth/v2/token`;
-
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    client_id: clientId,
-    client_secret: clientSecret,
-    redirect_uri: redirectUri,
-    code,
-  });
 
   let tokenData: Record<string, unknown>;
 
   try {
-    const response = await fetch(tokenUrl, {
+    const tokenResponse = await fetch(`${accountsBaseUrl}/oauth/v2/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        code,
+      }).toString(),
     });
+    const parsed: unknown = await tokenResponse.json();
 
-    tokenData = (await response.json()) as Record<string, unknown>;
-  } catch (err) {
-    // Network or parse error — do not expose details to the browser.
-    console.error("[Zoho OAuth] Token exchange network error:", err);
-    return NextResponse.json(
-      { error: "Failed to reach Zoho for token exchange. Try again later." },
-      { status: 502 }
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("Zoho returned an invalid token response.");
+    }
+    if (!tokenResponse.ok) {
+      console.error("[Zoho OAuth] Token exchange failed:", tokenResponse.status);
+      return clearOAuthState(
+        NextResponse.json({ error: "Zoho token exchange failed." }, { status: 400 }),
+      );
+    }
+
+    tokenData = parsed as Record<string, unknown>;
+  } catch (error) {
+    console.error(
+      "[Zoho OAuth] Token exchange request failed:",
+      error instanceof Error ? error.message : "Unknown error",
+    );
+    return clearOAuthState(
+      NextResponse.json(
+        { error: "Failed to reach Zoho for token exchange. Try again later." },
+        { status: 502 },
+      ),
     );
   }
 
-  // ── Safe logging rule ──────────────────────────────────────────────────────
-  // Never log access_token or refresh_token values.
-  // Only log boolean receipt status and expires_in.
-  console.log(
-    "[Zoho OAuth] access_token_received:",
-    Boolean(tokenData.access_token)
-  );
+  const accessToken =
+    typeof tokenData.access_token === "string" && tokenData.access_token
+      ? tokenData.access_token
+      : null;
+  const newRefreshToken =
+    typeof tokenData.refresh_token === "string" && tokenData.refresh_token
+      ? tokenData.refresh_token
+      : null;
+  const expiresIn = Number(tokenData.expires_in);
+
+  console.log("[Zoho OAuth] access_token_received:", Boolean(accessToken));
   console.log(
     "[Zoho OAuth] refresh_token_received:",
-    Boolean(tokenData.refresh_token)
+    Boolean(newRefreshToken),
   );
-  console.log(
-    "[Zoho OAuth] expires_in:",
-    tokenData.expires_in ?? "not provided"
-  );
-  // ──────────────────────────────────────────────────────────────────────────
 
-  // If Zoho did not return an access token the exchange failed.
-  if (!tokenData.access_token) {
-    console.error(
-      "[Zoho OAuth] Token exchange failed. Zoho did not return an access_token."
-    );
-    return NextResponse.json(
-      {
-        error:
-          "Token exchange failed. " +
-          "Check that your Client ID, Client Secret, and Redirect URI " +
-          "exactly match what is registered in the Zoho API Console.",
-      },
-      { status: 400 }
+  if (!accessToken || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+    return clearOAuthState(
+      NextResponse.json(
+        { error: "Zoho returned incomplete token data." },
+        { status: 400 },
+      ),
     );
   }
 
-  // Tokens received. Storage comes in Phase 4 (Supabase).
-  return NextResponse.json(
-    { message: "Zoho OAuth complete. Tokens received safely." },
-    { headers: { "Cache-Control": "no-store" } }
+  let accountPayload: unknown;
+
+  try {
+    const accountResponse = await fetch(`${mailBaseUrl}/accounts`, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+      },
+    });
+    accountPayload = await accountResponse.json();
+
+    if (!accountResponse.ok) {
+      console.error(
+        "[Zoho OAuth] Account metadata request failed:",
+        accountResponse.status,
+      );
+      return clearOAuthState(
+        NextResponse.json(
+          { error: "Failed to retrieve Zoho account metadata." },
+          { status: 502 },
+        ),
+      );
+    }
+  } catch (error) {
+    console.error(
+      "[Zoho OAuth] Account metadata request failed:",
+      error instanceof Error ? error.message : "Unknown error",
+    );
+    return clearOAuthState(
+      NextResponse.json(
+        { error: "Failed to retrieve Zoho account metadata." },
+        { status: 502 },
+      ),
+    );
+  }
+
+  const accounts =
+    typeof accountPayload === "object" && accountPayload !== null
+      ? (accountPayload as Record<string, unknown>).data
+      : null;
+  // ponytail: use the first enabled Zoho mailbox; add a chooser only if one
+  // authorization can legitimately connect multiple Zoho mailboxes.
+  const account = Array.isArray(accounts)
+    ? accounts.find(
+        (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          (value as Record<string, unknown>).type === "ZOHO_ACCOUNT" &&
+          (value as Record<string, unknown>).enabled !== false &&
+          typeof (value as Record<string, unknown>).accountId === "string" &&
+          ((value as Record<string, unknown>).accountId as string).trim()
+            .length > 0 &&
+          typeof (value as Record<string, unknown>).primaryEmailAddress ===
+            "string" &&
+          ((value as Record<string, unknown>).primaryEmailAddress as string)
+            .trim().length > 0,
+      )
+    : null;
+
+  if (!account) {
+    return clearOAuthState(
+      NextResponse.json(
+        { error: "Zoho did not return a usable mail account." },
+        { status: 502 },
+      ),
+    );
+  }
+
+  const zohoAccountId = (account as Record<string, unknown>).accountId as string;
+  const emailAddress = (
+    account as Record<string, unknown>
+  ).primaryEmailAddress as string;
+
+  const supabase = createSupabaseServerClient();
+  const { data: existing, error: readError } = await supabase
+    .from("zoho_connections")
+    .select("refresh_token")
+    .eq("zoho_account_id", zohoAccountId)
+    .maybeSingle();
+
+  if (readError) {
+    console.error("[Zoho OAuth] Connection lookup failed:", readError.message);
+    return clearOAuthState(
+      NextResponse.json(
+        { error: "Failed to store the Zoho connection." },
+        { status: 500 },
+      ),
+    );
+  }
+
+  const refreshToken =
+    newRefreshToken ||
+    (typeof existing?.refresh_token === "string"
+      ? existing.refresh_token
+      : null);
+
+  if (!refreshToken) {
+    return clearOAuthState(
+      NextResponse.json(
+        {
+          error:
+            "Zoho did not return a refresh token. Revoke access and reconnect.",
+        },
+        { status: 400 },
+      ),
+    );
+  }
+
+  const now = new Date();
+  const { error: writeError } = await supabase.from("zoho_connections").upsert(
+    {
+      zoho_account_id: zohoAccountId,
+      email_address: emailAddress.trim().toLowerCase(),
+      status: "active",
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      access_token_expires_at: new Date(
+        now.getTime() + expiresIn * 1000,
+      ).toISOString(),
+      updated_at: now.toISOString(),
+    },
+    { onConflict: "zoho_account_id" },
+  );
+
+  if (writeError) {
+    console.error("[Zoho OAuth] Connection write failed:", writeError.message);
+    return clearOAuthState(
+      NextResponse.json(
+        { error: "Failed to store the Zoho connection." },
+        { status: 500 },
+      ),
+    );
+  }
+
+  return clearOAuthState(
+    NextResponse.json(
+      { message: "Zoho OAuth complete. Connection stored safely." },
+      { headers: { "Cache-Control": "no-store" } },
+    ),
   );
 }

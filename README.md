@@ -12,11 +12,12 @@ A Vercel-ready Next.js app for tracking and classifying client emails.
 |-------|-------------------------------------|---------------|
 | 1     | Project setup + homepage            | ✅ Done       |
 | 2     | Connect to Zoho Mail (OAuth)        | ✅ Done       |
-| 3     | Classify emails with AI (OpenAI)    | 🔜 Later      |
-| 4     | Store results in Supabase database  | 🔜 Later      |
+| 3     | Classify emails with AI (OpenAI)    | ✅ Done       |
+| 4A    | Securely store Zoho connections     | ✅ Code ready |
+| 4B    | Read emails from Zoho               | 🔜 Later      |
 | 5     | Dashboard to view emails & labels   | 🔜 Later      |
 
-**Phases 1 and 2 are complete.** The Zoho OAuth login and token exchange routes are live. Tokens are not stored yet — that is Phase 4.
+**Phases 1–3 are complete.** Phase 4A adds OAuth state validation and server-only Zoho token storage. Email reading is intentionally deferred to Phase 4B.
 
 ---
 
@@ -173,7 +174,7 @@ Zoho will redirect back to `http://localhost:3000/api/zoho/callback`.
 You should see:
 
 ```json
-{ "message": "Zoho OAuth complete. Tokens received safely." }
+{ "message": "Zoho OAuth complete. Connection stored safely." }
 ```
 
 ### Step 7 — Check your Terminal (safe log only)
@@ -195,6 +196,94 @@ Before committing or deploying, change `.env.local` back to:
 ```
 ZOHO_REDIRECT_URI=https://applywizard.ai/api/zoho/callback
 ```
+
+---
+
+## Phase 4A — Supabase connection storage
+
+Phase 4A stores Zoho connection metadata and tokens only. It does not read or sync email.
+
+### Step 1 — Link Supabase CLI and apply the migration
+
+The Supabase CLI is installed as a project dev dependency. Authenticate it:
+
+```bash
+npx supabase login
+```
+
+Find the project reference in your Supabase dashboard URL:
+
+```text
+https://supabase.com/dashboard/project/YOUR_PROJECT_REF
+```
+
+Link this repository and apply the tracked migration:
+
+```bash
+npx supabase link --project-ref YOUR_PROJECT_REF
+npx supabase db push
+npx supabase migration list
+```
+
+`db push` applies `supabase/migrations/202606230001_create_zoho_connections.sql` to the linked project. Do not create the table separately in SQL Editor.
+
+### Step 2 — Add Supabase values locally
+
+In `.env.local`, replace these placeholders with values from your Supabase project settings:
+
+```ini
+NEXT_PUBLIC_SUPABASE_URL=your-project-url
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+The service-role key is secret. Never paste it into chat, browser code, Git, or screenshots.
+
+### Step 3 — Verify OAuth state protection
+
+Start the app in one Terminal:
+
+```bash
+npm run dev
+```
+
+Then run this in a second Terminal:
+
+```bash
+npm run check:phase4a
+```
+
+You should see:
+
+```text
+Phase 4A OAuth state check passed.
+```
+
+### Step 4 — Store one real Zoho connection
+
+1. Open `http://localhost:3000/api/zoho/login`.
+2. Approve Zoho access.
+3. Confirm the browser shows:
+
+   ```json
+   {"message":"Zoho OAuth complete. Connection stored safely."}
+   ```
+
+4. In Supabase SQL Editor, run this safe query:
+
+   ```sql
+   select
+     zoho_account_id,
+     email_address,
+     status,
+     access_token_expires_at,
+     last_refresh_at,
+     last_sync_at,
+     created_at,
+     updated_at
+   from public.zoho_connections;
+   ```
+
+Do not select, copy, or screenshot `access_token` or `refresh_token`.
 
 ---
 

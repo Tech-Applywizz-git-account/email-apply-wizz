@@ -34,6 +34,8 @@ export function GET(): NextResponse {
     );
   }
 
+  const state = crypto.randomUUID();
+
   // Build Zoho's authorization URL.
   // access_type=offline requests a refresh token so the app can
   // read emails without the user re-logging in every hour.
@@ -41,11 +43,21 @@ export function GET(): NextResponse {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: "ZohoMail.messages.READ",
+    scope: "ZohoMail.messages.READ,ZohoMail.accounts.READ",
     access_type: "offline",
+    state,
   });
 
   const authUrl = `${accountsBaseUrl}/oauth/v2/auth?${params.toString()}`;
+  const response = NextResponse.redirect(authUrl);
 
-  return NextResponse.redirect(authUrl);
+  response.cookies.set("zoho_oauth_state", state, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/api/zoho/callback",
+    maxAge: 600,
+  });
+
+  return response;
 }
