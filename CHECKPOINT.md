@@ -1,17 +1,17 @@
-# ApplyWizard Email Tracker — Phase 4B Checkpoint
+# ApplyWizard Email Tracker — Phase 4C Checkpoint
 
-This document serves as the final checkpoint for Phase 4B of the **ApplyWizard Email Tracker** project.
+This document serves as the final checkpoint for Phase 4C of the **ApplyWizard Email Tracker** project.
 
 ---
 
 ## 1. Current Phase Completed
 
-### Phase 4B: Read One Page of Zoho Emails Only
-- **Safe Fetching Route:** Implemented `GET /api/zoho/emails/test` to retrieve one page (latest 10 emails) from the active Zoho connection.
-- **Automatic Token Refresh:** Checks the token expiration (with a 5-minute safety buffer) and refreshes it automatically from Zoho's OAuth endpoint if expired, saving the refreshed access token and updated expiry times back to the database.
-- **Safe JSON Schema:** Maps Zoho messages to a sanitised schema returning only safe metadata (`messageId`, `from`, `subject`, `receivedAt`, `folder`). Secrets and access/refresh tokens are never logged or returned.
-- **Robust Endpoint Parsing:** Uses `/messages/view` to list emails from Zoho's Mail API conforming to the specified region/endpoint specification.
-- **End-to-End Verification:** Verified the complete pipeline including clean token fetch and automatic refresh logic after database token expiry tests.
+### Phase 4C: Inspect One Email’s Safe Content Only
+- **Safe Detail Route:** Implemented `GET /api/zoho/emails/test/[messageId]?folderId=[folderId]` to retrieve details and body content of a specific email using the folder ID and message ID.
+- **Payload Mapping:** Merges Zoho's `/details` and `/content` endpoints to return a sanitised response: `messageId`, `from`, `to`, `cc`, `subject`, `receivedAt`, `folder`, `bodyText` (stripped of HTML tags), `bodyHtml` (raw message content HTML), `hasAttachments`, and `attachmentCount`.
+- **Recipient Parsing:** Extracts clean recipient addresses from raw address metadata headers using a custom parser.
+- **Listing Update:** Modified `/api/zoho/emails/test` (Phase 4B listing route) to return `folderId` as safe metadata for each message item, enabling simple query parameter lookup for the detail route.
+- **End-to-End Verification:** Verified single email retrieval and checked all output fields for correct structure and safety compliance.
 
 ---
 
@@ -19,11 +19,11 @@ This document serves as the final checkpoint for Phase 4B of the **ApplyWizard E
 
 Below are the recent commits on the current branch (`main`):
 
+- **`acc7e87`** Phase 4C: implement GET /api/zoho/emails/test/[messageId] safe email detail route
+- **`5e6a50e`** docs: create Phase 4B final checkpoint
 - **`138e98a`** Phase 4B: implement GET /api/zoho/emails/test safe email fetching route
+- **`d5eb2c0`** docs: update Phase 4A final checkpoint
 - **`b619b05`** Phase 4A: secure Zoho connection token storage in Supabase and OAuth state validation
-- **`e7dc366`** docs: create Phase 3 final checkpoint
-- **`2c097e2`** docs: add Phase 3 testing results documentation
-- **`1311a9d`** Phase 3: implement POST /api/classify/test with regex + GPT-4o-mini pipeline
 
 ---
 
@@ -32,7 +32,7 @@ Below are the recent commits on the current branch (`main`):
 The following environment variables are specified in `.env.example` and are required for full system operation:
 
 ```ini
-# -- Zoho OAuth (Phase 2, 4A, & 4B) --
+# -- Zoho OAuth (Phase 2, 4A, 4B & 4C) --
 ZOHO_CLIENT_ID=YOUR_CLIENT_ID_HERE
 ZOHO_CLIENT_SECRET=YOUR_CLIENT_SECRET_HERE
 ZOHO_REDIRECT_URI=https://applywizard.ai/api/zoho/callback
@@ -44,7 +44,7 @@ ZOHO_ADMIN_EMAIL=ramakrishn@applywizard.ai
 OPENAI_API_KEY=YOUR_OPENAI_API_KEY_HERE
 DEEPSEEK_API_KEY=YOUR_DEEPSEEK_API_KEY_HERE (Optional)
 
-# -- Supabase (Phase 4A & 4B) --
+# -- Supabase (Phase 4A, 4B & 4C) --
 NEXT_PUBLIC_SUPABASE_URL=YOUR_SUPABASE_PROJECT_URL_HERE
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY_HERE
 ```
@@ -53,14 +53,14 @@ SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY_HERE
 
 ## 4. Known Limitations
 
-- **No Persistent Message Syncing:** Emails are fetched dynamically on-demand through the test route and are not yet stored in a persistent database table.
-- **No Background Scheduler:** There is currently no cron job or background scheduler fetching and processing emails in the background.
+- **No Email Database Storage:** Individual email metadata and bodies are fetched dynamically on-demand through the test routes and are not saved in a persistent database table.
+- **No Background Sync/Cron Jobs:** The system does not run background sync processes or check webhook updates to automatically retrieve and process emails.
 
 ---
 
 ## 5. Next Recommended Phase
 
-### Phase 4C: Persistent Sync & Deduplication
-1. Create an `emails` table in Supabase to persist email metadata and classification outcomes.
-2. Implement a background job (or manual sync endpoint) to fetch emails, identify new ones (deduplication based on `messageId`), and store them in the database.
-3. Pass new emails through the Phase 3 AI Email Classification pipeline before database insertion.
+### Phase 4D: AI Classification of Live Zoho Emails
+1. Extend the dynamic inspection handler (or create a pipeline route) to pass fetched Zoho email contents into the Phase 3 classification engine (`lib/classify/aiClassifier.ts`).
+2. Run live emails through deterministic regex parsing first, and fall back to GPT-4o-mini classification.
+3. Validate classification response outputs and verify they return correct category and field extractions.
