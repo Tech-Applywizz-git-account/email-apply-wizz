@@ -181,7 +181,7 @@ export async function POST() {
     .from("zoho_email_metadata")
     .select("*")
     .eq("mailbox_email", connection.email_address)
-    .eq("classification_status", "pending")
+    .in("classification_status", ["pending", "failed"])
     .order("received_at", { ascending: false })
     .limit(5);
 
