@@ -10,13 +10,13 @@ A Vercel-ready Next.js app for tracking and classifying client emails.
 
 | Phase | What gets built                     | Status        |
 |-------|-------------------------------------|---------------|
-| 1     | Project setup + homepage            | ✅ Done now   |
-| 2     | Connect to Zoho Mail (OAuth)        | 🔜 Next       |
+| 1     | Project setup + homepage            | ✅ Done       |
+| 2     | Connect to Zoho Mail (OAuth)        | ✅ Done       |
 | 3     | Classify emails with AI (OpenAI)    | 🔜 Later      |
 | 4     | Store results in Supabase database  | 🔜 Later      |
 | 5     | Dashboard to view emails & labels   | 🔜 Later      |
 
-Right now, **Phase 1 is complete**. You have a working Next.js app that runs locally and can be deployed to Vercel.
+**Phases 1 and 2 are complete.** The Zoho OAuth login and token exchange routes are live. Tokens are not stored yet — that is Phase 4.
 
 ---
 
@@ -120,6 +120,81 @@ npm run build     # Builds the production version (confirms everything compiles)
 4. Click **Deploy**. Your app will be live in ~1 minute.
 
 > When you are ready to add Zoho/AI/Supabase keys, add them in Vercel's **Project → Settings → Environment Variables** panel. Never put real keys in `.env.example`.
+
+---
+
+## Testing Zoho OAuth locally (Phase 2)
+
+Before testing on the live domain, run the full OAuth flow on your Mac first.
+
+### Step 1 — Add a localhost redirect URI in Zoho
+
+1. Go to [api-console.zoho.in](https://api-console.zoho.in)
+2. Open your application
+3. Under **Authorized Redirect URIs**, add a second entry:
+   ```
+   http://localhost:3000/api/zoho/callback
+   ```
+4. Save. Zoho now accepts both your production URL and localhost.
+
+### Step 2 — Switch your local redirect URI temporarily
+
+Open `.env.local` in TextEdit and change this one line:
+
+```
+ZOHO_REDIRECT_URI=http://localhost:3000/api/zoho/callback
+```
+
+> ⚠️ This is for local testing only. Switch it back to the production URL before deploying.
+
+### Step 3 — Start the dev server
+
+```bash
+npm run dev
+```
+
+### Step 4 — Trigger the login flow
+
+Open this URL in your browser:
+
+```
+http://localhost:3000/api/zoho/login
+```
+
+You should be redirected to Zoho's login page.
+
+### Step 5 — Approve access on Zoho
+
+Log in with `ramakrishn@applywizard.ai` and click **Accept**.
+Zoho will redirect back to `http://localhost:3000/api/zoho/callback`.
+
+### Step 6 — Check the browser
+
+You should see:
+
+```json
+{ "message": "Zoho OAuth complete. Tokens received safely." }
+```
+
+### Step 7 — Check your Terminal (safe log only)
+
+In the Terminal where `npm run dev` is running, look for:
+
+```
+[Zoho OAuth] access_token_received: true
+[Zoho OAuth] refresh_token_received: true
+[Zoho OAuth] expires_in: 3600
+```
+
+If `access_token_received` is `true`, the OAuth handshake worked. No raw token values are ever shown.
+
+### Step 8 — Restore the production redirect URI
+
+Before committing or deploying, change `.env.local` back to:
+
+```
+ZOHO_REDIRECT_URI=https://applywizard.ai/api/zoho/callback
+```
 
 ---
 
