@@ -1,18 +1,17 @@
-# ApplyWizard Email Tracker — Phase 4A Checkpoint
+# ApplyWizard Email Tracker — Phase 4B Checkpoint
 
-This document serves as the final checkpoint for Phase 4A of the **ApplyWizard Email Tracker** project.
+This document serves as the final checkpoint for Phase 4B of the **ApplyWizard Email Tracker** project.
 
 ---
 
 ## 1. Current Phase Completed
 
-### Phase 4A: Secure Zoho Connection Storage (Supabase Setup & OAuth State Validation)
-- **Supabase CLI Initialized:** Supabase configuration (`supabase/config.toml`) and initial database migrations (`supabase/migrations/202606230001_create_zoho_connections.sql`) have been configured.
-- **Database Schema:** Defined the `zoho_connections` table to securely house candidate account metadata, access/refresh tokens, and sync status under standard RLS rules (accessible only by the `service_role` key).
-- **OAuth State Protection:** Implemented cookie-based OAuth `state` generation and matching (`app/api/zoho/login/route.ts` and `app/api/zoho/callback/route.ts`) to prevent CSRF attacks.
-- **Supabase Client Utility:** Added the server-only Supabase client initialization helper in `lib/supabase/server.ts`.
-- **Token Upsertion:** Updated the Zoho callback route to exchange codes for access/refresh tokens, retrieve the primary Zoho email/account metadata, and upsert the connection securely into Supabase.
-- **Verification Scripts:** Added the script `scripts/check-phase4a.mjs` to automate state verification tests.
+### Phase 4B: Read One Page of Zoho Emails Only
+- **Safe Fetching Route:** Implemented `GET /api/zoho/emails/test` to retrieve one page (latest 10 emails) from the active Zoho connection.
+- **Automatic Token Refresh:** Checks the token expiration (with a 5-minute safety buffer) and refreshes it automatically from Zoho's OAuth endpoint if expired, saving the refreshed access token and updated expiry times back to the database.
+- **Safe JSON Schema:** Maps Zoho messages to a sanitised schema returning only safe metadata (`messageId`, `from`, `subject`, `receivedAt`, `folder`). Secrets and access/refresh tokens are never logged or returned.
+- **Robust Endpoint Parsing:** Uses `/messages/view` to list emails from Zoho's Mail API conforming to the specified region/endpoint specification.
+- **End-to-End Verification:** Verified the complete pipeline including clean token fetch and automatic refresh logic after database token expiry tests.
 
 ---
 
@@ -20,11 +19,11 @@ This document serves as the final checkpoint for Phase 4A of the **ApplyWizard E
 
 Below are the recent commits on the current branch (`main`):
 
+- **`138e98a`** Phase 4B: implement GET /api/zoho/emails/test safe email fetching route
 - **`b619b05`** Phase 4A: secure Zoho connection token storage in Supabase and OAuth state validation
 - **`e7dc366`** docs: create Phase 3 final checkpoint
 - **`2c097e2`** docs: add Phase 3 testing results documentation
 - **`1311a9d`** Phase 3: implement POST /api/classify/test with regex + GPT-4o-mini pipeline
-- **`e635fb1`** Phase 3 plan: confirm categories, AI model, and DeepSeek placeholder
 
 ---
 
@@ -33,7 +32,7 @@ Below are the recent commits on the current branch (`main`):
 The following environment variables are specified in `.env.example` and are required for full system operation:
 
 ```ini
-# -- Zoho OAuth (Phase 2 & 4A) --
+# -- Zoho OAuth (Phase 2, 4A, & 4B) --
 ZOHO_CLIENT_ID=YOUR_CLIENT_ID_HERE
 ZOHO_CLIENT_SECRET=YOUR_CLIENT_SECRET_HERE
 ZOHO_REDIRECT_URI=https://applywizard.ai/api/zoho/callback
@@ -45,7 +44,7 @@ ZOHO_ADMIN_EMAIL=ramakrishn@applywizard.ai
 OPENAI_API_KEY=YOUR_OPENAI_API_KEY_HERE
 DEEPSEEK_API_KEY=YOUR_DEEPSEEK_API_KEY_HERE (Optional)
 
-# -- Supabase (Phase 4A) --
+# -- Supabase (Phase 4A & 4B) --
 NEXT_PUBLIC_SUPABASE_URL=YOUR_SUPABASE_PROJECT_URL_HERE
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY_HERE
 ```
@@ -54,22 +53,14 @@ SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY_HERE
 
 ## 4. Known Limitations
 
-- **Supabase Link & Auth Pending:** The CLI linking has not been completed because the local Supabase URL is still a placeholder and the CLI is not yet authenticated with the remote project.
-- **To resolve this, run:**
-  ```bash
-  npx supabase login
-  npx supabase link --project-ref YOUR_PROJECT_REF
-  npx supabase db push
-  npx supabase migration list
-  ```
-- **No Email Retrieval:** The connection metadata is successfully stored in the database, but fetching/syncing real emails from Zoho Mail is deferred to Phase 4B.
+- **No Persistent Message Syncing:** Emails are fetched dynamically on-demand through the test route and are not yet stored in a persistent database table.
+- **No Background Scheduler:** There is currently no cron job or background scheduler fetching and processing emails in the background.
 
 ---
 
 ## 5. Next Recommended Phase
 
-### Phase 4B: Zoho Mail Reading & Syncing
-1. Implement a scheduler or polling job to fetch emails from Zoho Mail using stored access tokens.
-2. Build auto-refresh token mechanics when Zoho calls return token expiry errors.
-3. Classify fetched emails using the Phase 3 pipeline.
-4. Persist email metadata and classification results to a new `emails` table in Supabase.
+### Phase 4C: Persistent Sync & Deduplication
+1. Create an `emails` table in Supabase to persist email metadata and classification outcomes.
+2. Implement a background job (or manual sync endpoint) to fetch emails, identify new ones (deduplication based on `messageId`), and store them in the database.
+3. Pass new emails through the Phase 3 AI Email Classification pipeline before database insertion.
