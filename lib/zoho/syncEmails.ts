@@ -172,7 +172,9 @@ export async function syncEmails(): Promise<SyncResult> {
 
   // Fetch latest emails from Zoho Mail
   const zohoAccountId: string = connection.zoho_account_id;
-  const emailsUrl = `${mailBaseUrl}/accounts/${zohoAccountId}/messages/view?limit=10`;
+  // ponytail: clamp 1–10; invalid/missing env → 10
+  const syncLimit = Math.min(10, Math.max(1, parseInt(process.env.ZOHO_SYNC_LIMIT ?? "10", 10) || 10));
+  const emailsUrl = `${mailBaseUrl}/accounts/${zohoAccountId}/messages/view?limit=${syncLimit}`;
   console.log(
     "[Zoho Sync] Fetching latest emails from:",
     emailsUrl.replace(zohoAccountId, "ANONYMIZED_ID"),

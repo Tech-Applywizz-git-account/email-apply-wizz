@@ -179,3 +179,97 @@ describe("syncEmails — ZOHO_SYNC_MAILBOX targeting", () => {
     vi.unstubAllGlobals();
   });
 });
+
+// ── ZOHO_SYNC_LIMIT tests ─────────────────────────────────────────────────────
+
+describe("syncEmails — ZOHO_SYNC_LIMIT", () => {
+  // Capture the URL passed to fetch so we can assert the limit parameter.
+  let capturedUrl: string | null = null;
+
+  function stubFetchCapture() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        capturedUrl = url;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ status: { code: 200 }, data: [] }),
+        });
+      }),
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedUrl = null;
+    // Default: valid connection always returned
+    mockMailboxSingle.mockResolvedValue({ data: TRACKER_CONNECTION, error: null });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.ZOHO_CLIENT_ID;
+    delete process.env.ZOHO_CLIENT_SECRET;
+    delete process.env.ZOHO_ACCOUNTS_BASE_URL;
+    delete process.env.ZOHO_MAIL_BASE_URL;
+    delete process.env.ZOHO_SYNC_MAILBOX;
+    delete process.env.ZOHO_SYNC_LIMIT;
+  });
+
+  it("ZOHO_SYNC_LIMIT=1 sends limit=1 to Zoho", async () => {
+    setEnvVars("tracker@applywizard.ai");
+    process.env.ZOHO_SYNC_LIMIT = "1";
+    stubFetchCapture();
+
+    const { syncEmails } = await import("./syncEmails");
+    await syncEmails();
+
+    expect(capturedUrl).toContain("limit=1");
+  });
+
+  it("missing ZOHO_SYNC_LIMIT defaults to limit=10", async () => {
+    setEnvVars("tracker@applywizard.ai");
+    delete process.env.ZOHO_SYNC_LIMIT;
+    stubFetchCapture();
+
+    const { syncEmails } = await import("./syncEmails");
+    await syncEmails();
+
+    expect(capturedUrl).toContain("limit=10");
+  });
+
+  it("invalid ZOHO_SYNC_LIMIT (non-numeric string) defaults to limit=10", async () => {
+    setEnvVars("tracker@applywizard.ai");
+    process.env.ZOHO_SYNC_LIMIT = "abc";
+    stubFetchCapture();
+
+    const { syncEmails } = await import("./syncEmails");
+    await syncEmails();
+
+    expect(capturedUrl).toContain("limit=10");
+  });
+
+  it("ZOHO_SYNC_LIMIT above 10 is capped at limit=10", async () => {
+    setEnvVars("tracker@applywizard.ai");
+    process.env.ZOHO_SYNC_LIMIT = "99";
+    stubFetchCapture();
+
+    const { syncEmails } = await import("./syncEmails");
+    await syncEmails();
+
+    expect(capturedUrl).toContain("limit=10");
+    expect(capturedUrl).not.toContain("limit=99");
+  });
+
+  it("ZOHO_SYNC_LIMIT below 1 (zero) is floored to limit=1", async () => {
+    // parseInt("0") = 0; Math.max(1, 0) = 1 → sends limit=1
+    setEnvVars("tracker@applywizard.ai");
+    process.env.ZOHO_SYNC_LIMIT = "0";
+    stubFetchCapture();
+
+    const { syncEmails } = await import("./syncEmails");
+    await syncEmails();
+
+    expect(capturedUrl).toContain("limit=1");
+  });
+});
