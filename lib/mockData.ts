@@ -11,12 +11,19 @@ export interface CA {
   reviewRequired: number;
 }
 
+export type MailboxStatus =
+  | "Active"
+  | "Needs Mapping"
+  | "Needs Connection"
+  | "Needs Attention"
+  | "Disabled";
+
 export interface Client {
   id: string;
   name: string;
   email: string;
   mailbox: string;
-  mailboxStatus: "healthy" | "needs_reconnect";
+  mailboxStatus: MailboxStatus;
   caId: string;
   caName: string;
   emailsToday: number;
@@ -122,8 +129,8 @@ export const mockClients: Client[] = [
     id: "client1",
     name: "Rohan Mehta",
     email: "rohan.mehta@gmail.com",
-    mailbox: "rohan.m@zohomail.in",
-    mailboxStatus: "healthy",
+    mailbox: "rohan.m@applywizz.ai",
+    mailboxStatus: "Active",
     caId: "ca1",
     caName: "Amit Sharma",
     emailsToday: 4,
@@ -138,8 +145,8 @@ export const mockClients: Client[] = [
     id: "client2",
     name: "Sneha Rao",
     email: "sneha.rao@yahoo.com",
-    mailbox: "sneha.r@zohomail.in",
-    mailboxStatus: "healthy",
+    mailbox: "sneha.r@applywizz.ai",
+    mailboxStatus: "Active",
     caId: "ca1",
     caName: "Amit Sharma",
     emailsToday: 6,
@@ -154,8 +161,8 @@ export const mockClients: Client[] = [
     id: "client3",
     name: "Vikram Singh",
     email: "vikram.singh@outlook.com",
-    mailbox: "vikram.s@zohomail.in",
-    mailboxStatus: "needs_reconnect", // Zoho token expired
+    mailbox: "vikram.s@applywizz.ai",
+    mailboxStatus: "Needs Connection", // Zoho token expired
     caId: "ca2",
     caName: "Priya Patel",
     emailsToday: 0,
@@ -170,8 +177,8 @@ export const mockClients: Client[] = [
     id: "client4",
     name: "Meera Nair",
     email: "meera.nair@gmail.com",
-    mailbox: "meera.n@zohomail.in",
-    mailboxStatus: "healthy",
+    mailbox: "meera.n@applywizz.ai",
+    mailboxStatus: "Active",
     caId: "ca2",
     caName: "Priya Patel",
     emailsToday: 8,
@@ -186,8 +193,8 @@ export const mockClients: Client[] = [
     id: "client5",
     name: "Karan Johar",
     email: "karan.johar@gmail.com",
-    mailbox: "karan.j@zohomail.in",
-    mailboxStatus: "healthy",
+    mailbox: "karan.j@applywizz.ai",
+    mailboxStatus: "Active",
     caId: "ca3",
     caName: "Rahul Verma",
     emailsToday: 3,
@@ -202,8 +209,8 @@ export const mockClients: Client[] = [
     id: "client6",
     name: "Deepika Padukone",
     email: "deepika.p@outlook.com",
-    mailbox: "deepika.p@zohomail.in",
-    mailboxStatus: "healthy",
+    mailbox: "deepika.p@applywizz.ai",
+    mailboxStatus: "Active",
     caId: "ca4",
     caName: "Anjali Gupta",
     emailsToday: 5,
@@ -214,6 +221,22 @@ export const mockClients: Client[] = [
     assessmentsCount: 1,
     rejectionsCount: 2,
   },
+  {
+    id: "client7",
+    name: "Venkat Nalabolu",
+    email: "venkat.n@gmail.com",
+    mailbox: "venkat.nalabolu@applywizz.ai",
+    mailboxStatus: "Needs Mapping",
+    caId: "",
+    caName: "Unassigned",
+    emailsToday: 0,
+    pendingClassification: 0,
+    reviewRequired: 0,
+    applicationsCount: 0,
+    interviewsCount: 0,
+    assessmentsCount: 0,
+    rejectionsCount: 0,
+  },
 ];
 
 // ── Mock Applications (Emails) ────────────────────────────────────────────────
@@ -223,7 +246,7 @@ export const mockApplications: Application[] = [
     clientId: "client1",
     clientName: "Rohan Mehta",
     clientEmail: "rohan.mehta@gmail.com",
-    mailbox: "rohan.m@zohomail.in",
+    mailbox: "rohan.m@applywizz.ai",
     caId: "ca1",
     caName: "Amit Sharma",
     companyName: "Google",
@@ -245,7 +268,7 @@ export const mockApplications: Application[] = [
     clientId: "client3",
     clientName: "Vikram Singh",
     clientEmail: "vikram.singh@outlook.com",
-    mailbox: "vikram.s@zohomail.in",
+    mailbox: "vikram.s@applywizz.ai",
     caId: "ca2",
     caName: "Priya Patel",
     companyName: "Meta",
@@ -267,7 +290,7 @@ export const mockApplications: Application[] = [
     clientId: "client4",
     clientName: "Meera Nair",
     clientEmail: "meera.nair@gmail.com",
-    mailbox: "meera.n@zohomail.in",
+    mailbox: "meera.n@applywizz.ai",
     caId: "ca2",
     caName: "Priya Patel",
     companyName: "Amazon",
@@ -289,7 +312,7 @@ export const mockApplications: Application[] = [
     clientId: "client1",
     clientName: "Rohan Mehta",
     clientEmail: "rohan.mehta@gmail.com",
-    mailbox: "rohan.m@zohomail.in",
+    mailbox: "rohan.m@applywizz.ai",
     caId: "ca1",
     caName: "Amit Sharma",
     companyName: "Microsoft",
@@ -311,7 +334,7 @@ export const mockApplications: Application[] = [
     clientId: "client5",
     clientName: "Karan Johar",
     clientEmail: "karan.johar@gmail.com",
-    mailbox: "karan.j@zohomail.in",
+    mailbox: "karan.j@applywizz.ai",
     caId: "ca3",
     caName: "Rahul Verma",
     companyName: "Uber",
@@ -333,7 +356,7 @@ export const mockApplications: Application[] = [
     clientId: "client2",
     clientName: "Sneha Rao",
     clientEmail: "sneha.rao@yahoo.com",
-    mailbox: "sneha.r@zohomail.in",
+    mailbox: "sneha.r@applywizz.ai",
     caId: "ca1",
     caName: "Amit Sharma",
     companyName: "Netflix",
@@ -355,7 +378,7 @@ export const mockApplications: Application[] = [
     clientId: "client3",
     clientName: "Vikram Singh",
     clientEmail: "vikram.singh@outlook.com",
-    mailbox: "vikram.s@zohomail.in",
+    mailbox: "vikram.s@applywizz.ai",
     caId: "ca2",
     caName: "Priya Patel",
     companyName: "Apple",
@@ -377,7 +400,7 @@ export const mockApplications: Application[] = [
     clientId: "client4",
     clientName: "Meera Nair",
     clientEmail: "meera.nair@gmail.com",
-    mailbox: "meera.n@zohomail.in",
+    mailbox: "meera.n@applywizz.ai",
     caId: "ca2",
     caName: "Priya Patel",
     companyName: "Stripe",
@@ -399,7 +422,7 @@ export const mockApplications: Application[] = [
     clientId: "client2",
     clientName: "Sneha Rao",
     clientEmail: "sneha.rao@yahoo.com",
-    mailbox: "sneha.r@zohomail.in",
+    mailbox: "sneha.r@applywizz.ai",
     caId: "ca1",
     caName: "Amit Sharma",
     companyName: "Airbnb",
@@ -421,7 +444,7 @@ export const mockApplications: Application[] = [
     clientId: "client6",
     clientName: "Deepika Padukone",
     clientEmail: "deepika.p@outlook.com",
-    mailbox: "deepika.p@zohomail.in",
+    mailbox: "deepika.p@applywizz.ai",
     caId: "ca4",
     caName: "Anjali Gupta",
     companyName: "Oracle",
@@ -443,7 +466,7 @@ export const mockApplications: Application[] = [
     clientId: "client4",
     clientName: "Meera Nair",
     clientEmail: "meera.nair@gmail.com",
-    mailbox: "meera.n@zohomail.in",
+    mailbox: "meera.n@applywizz.ai",
     caId: "ca2",
     caName: "Priya Patel",
     companyName: "Salesforce",

@@ -9,3 +9,6 @@ next-env.d.ts
 .DS_Store
 npm-debug.log*
 .vercel
+/playwright-report/
+/test-results/
+

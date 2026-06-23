@@ -46,8 +46,8 @@ export default function OverviewPage() {
     .slice(0, 4);
 
   // Mailbox Health status counts
-  const healthyCount = mockClients.filter((c) => c.mailboxStatus === "healthy").length;
-  const issueCount = mockClients.filter((c) => c.mailboxStatus === "needs_reconnect").length;
+  const healthyCount = mockClients.filter((c) => c.mailboxStatus === "Active").length;
+  const issueCount = mockClients.filter((c) => c.mailboxStatus !== "Active").length;
 
   return (
     <div className="overview-container">
@@ -526,6 +526,7 @@ export default function OverviewPage() {
           display: flex;
           flex-direction: column;
           gap: 24px;
+          min-width: 0;
         }
 
         .content-card {
@@ -928,6 +929,12 @@ export default function OverviewPage() {
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
+            gap: 12px;
+          }
+
+          .mobile-card-header > div:first-child {
+            min-width: 0;
+            flex: 1;
           }
 
           .m-client-name {
@@ -939,6 +946,8 @@ export default function OverviewPage() {
           .m-client-mailbox {
             font-size: 0.75rem;
             color: var(--text-muted);
+            word-break: break-all;
+            overflow-wrap: break-word;
           }
 
           .m-card-subject {
@@ -960,6 +969,30 @@ export default function OverviewPage() {
 
           .quick-actions-grid {
             grid-template-columns: 1fr; /* Full width actions */
+          }
+
+          .filter-bar-card {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 16px;
+            padding: 16px;
+          }
+
+          .filter-group {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 12px;
+          }
+
+          .select-wrapper select {
+            width: 100%;
+          }
+
+          .sync-info {
+            width: 100%;
+            justify-content: space-between;
+            border-top: 1px solid var(--border-gray);
+            padding-top: 12px;
           }
         }
       `}</style>

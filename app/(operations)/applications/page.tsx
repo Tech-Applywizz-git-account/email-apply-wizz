@@ -294,6 +294,7 @@ function ApplicationsContent() {
           border: 1px solid var(--border-gray);
           border-radius: 8px;
           background-color: var(--workspace-bg);
+          min-width: 0;
         }
 
         .search-icon {
@@ -306,6 +307,7 @@ function ApplicationsContent() {
           background: none;
           outline: none;
           width: 100%;
+          min-width: 0;
           color: var(--text-dark);
           font-size: 0.925rem;
           font-family: var(--font-display);
@@ -575,6 +577,12 @@ function ApplicationsContent() {
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
+            gap: 12px;
+          }
+
+          .card-top-row > div:first-child {
+            min-width: 0;
+            flex: 1;
           }
 
           .m-client {

@@ -43,8 +43,8 @@ export default function CAPortfolioPage() {
   // ── Computed Portfolio Data ──────────────────────────────────────────────────
   const globalStats = useMemo(() => {
     const clientsCount = mockClients.length;
-    const healthyMailboxesCount = mockClients.filter((c) => c.mailboxStatus === "healthy").length;
-    const needsReconnectCount = mockClients.filter((c) => c.mailboxStatus === "needs_reconnect").length;
+    const healthyMailboxesCount = mockClients.filter((c) => c.mailboxStatus === "Active").length;
+    const needsReconnectCount = mockClients.filter((c) => c.mailboxStatus !== "Active" && c.mailboxStatus !== "Needs Mapping").length;
     const pendingReviewsCount = mockClients.filter((c) => c.reviewRequired > 0).length;
     const totalReviewsNeeded = mockClients.reduce((sum, c) => sum + c.reviewRequired, 0);
 
@@ -254,7 +254,7 @@ export default function CAPortfolioPage() {
         {filteredCAs.map((ca) => {
           const isSelected = activeCaId === ca.id;
           const assigned = mockClients.filter((c) => c.caId === ca.id);
-          const needsReconnect = assigned.some((c) => c.mailboxStatus === "needs_reconnect");
+          const needsReconnect = assigned.some((c) => c.mailboxStatus !== "Active" && c.mailboxStatus !== "Needs Mapping");
 
           return (
             <div
@@ -366,8 +366,8 @@ export default function CAPortfolioPage() {
                       </td>
                       <td className="font-semibold">{client.mailbox}</td>
                       <td>
-                        <span className={`status-pill ${client.mailboxStatus}`}>
-                          {client.mailboxStatus === "healthy" ? "Active" : "Needs Attention"}
+                        <span className={`status-pill ${client.mailboxStatus === "Active" ? "healthy" : "needs_reconnect"}`}>
+                          {client.mailboxStatus}
                         </span>
                       </td>
                       <td>
@@ -409,8 +409,8 @@ export default function CAPortfolioPage() {
                       <div className="m-client-name">{client.name}</div>
                       <div className="m-client-email">{client.email}</div>
                     </div>
-                    <span className={`status-pill ${client.mailboxStatus}`}>
-                      {client.mailboxStatus === "healthy" ? "Active" : "Error"}
+                    <span className={`status-pill ${client.mailboxStatus === "Active" ? "healthy" : "needs_reconnect"}`}>
+                      {client.mailboxStatus}
                     </span>
                   </div>
 
@@ -459,7 +459,7 @@ export default function CAPortfolioPage() {
         <div className="modal-overlay" onClick={() => setShowAddAdvisorModal(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Add Client Advisor (CA)</h2>
+              <h2>Add Client Advisor (CA) <span style={{fontSize: '0.75rem', fontWeight: 600, padding: '2px 8px', borderRadius: '4px', backgroundColor: '#e2e8f0', color: '#64748b', marginLeft: '8px'}}>Mock Only</span></h2>
               <button className="close-btn" onClick={() => setShowAddAdvisorModal(false)}>
                 ✕
               </button>
@@ -511,7 +511,7 @@ export default function CAPortfolioPage() {
         <div className="modal-overlay" onClick={() => setShowAssignClientModal(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Reassign Client Advisor</h2>
+              <h2>Reassign Client Advisor <span style={{fontSize: '0.75rem', fontWeight: 600, padding: '2px 8px', borderRadius: '4px', backgroundColor: '#e2e8f0', color: '#64748b', marginLeft: '8px'}}>Mock Only</span></h2>
               <button className="close-btn" onClick={() => setShowAssignClientModal(false)}>
                 ✕
               </button>
@@ -1312,6 +1312,12 @@ export default function CAPortfolioPage() {
             align-items: flex-start;
             border-bottom: 1px solid var(--border-gray);
             padding-bottom: 12px;
+            gap: 12px;
+          }
+
+          .card-top-row > div:first-child {
+            min-width: 0;
+            flex: 1;
           }
 
           .m-client-name {
@@ -1324,6 +1330,8 @@ export default function CAPortfolioPage() {
             font-size: 0.75rem;
             color: var(--text-muted);
             margin-top: 1px;
+            word-break: break-all;
+            overflow-wrap: break-word;
           }
 
           .m-card-body-row {

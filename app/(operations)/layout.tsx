@@ -316,6 +316,7 @@ export default function OperationsLayout({
           display: flex;
           flex-direction: column;
           transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+          min-width: 0;
         }
 
         .workspace-header {
@@ -450,6 +451,10 @@ export default function OperationsLayout({
 
         /* Mobile Breakpoint (Below 768px) */
         @media (max-width: 767px) {
+          .ops-app-shell {
+            flex-direction: column;
+          }
+
           .ops-sidebar {
             display: none;
           }

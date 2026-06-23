@@ -44,8 +44,8 @@ export default function ClientDashboardPage({ params }: PageProps) {
           <div className="identity-text">
             <div className="profile-top-row">
               <h1 className="profile-name">{client.name}</h1>
-              <span className={`status-badge ${client.mailboxStatus}`}>
-                {client.mailboxStatus === "healthy" ? "● Connected & Active" : "● Needs Reconnect"}
+              <span className={`status-badge ${client.mailboxStatus === "Active" ? "healthy" : "needs_reconnect"}`}>
+                {client.mailboxStatus === "Active" ? "● Connected & Active" : `● ${client.mailboxStatus}`}
               </span>
             </div>
             <p className="profile-subtext">
@@ -460,6 +460,7 @@ export default function ClientDashboardPage({ params }: PageProps) {
           display: flex;
           flex-direction: column;
           gap: 24px;
+          min-width: 0;
         }
 
         .card-box {
@@ -743,16 +744,26 @@ export default function ClientDashboardPage({ params }: PageProps) {
         @media (max-width: 767px) {
           .client-profile-header {
             padding: 16px;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 16px;
           }
 
           .profile-identity {
             gap: 12px;
+            width: 100%;
+          }
+
+          .profile-subtext {
+            word-break: break-all;
+            overflow-wrap: break-word;
           }
 
           .avatar-large {
             width: 44px;
             height: 44px;
             font-size: 1rem;
+            flex-shrink: 0;
           }
 
           .profile-name {

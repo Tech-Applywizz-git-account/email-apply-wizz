@@ -110,8 +110,8 @@ export default function ClientsPage() {
                       </td>
                       <td className="font-semibold">{client.mailbox}</td>
                       <td>
-                        <span className={`status-pill ${client.mailboxStatus}`}>
-                          {client.mailboxStatus === "healthy" ? "Active" : "Needs Reconnect"}
+                        <span className={`status-pill ${client.mailboxStatus === "Active" ? "healthy" : "needs_reconnect"}`}>
+                          {client.mailboxStatus}
                         </span>
                       </td>
                       <td>{client.caName}</td>
@@ -143,8 +143,8 @@ export default function ClientsPage() {
                       <div className="m-client-name">{client.name}</div>
                       <div className="m-client-email">{client.email}</div>
                     </div>
-                    <span className={`status-pill ${client.mailboxStatus}`}>
-                      {client.mailboxStatus === "healthy" ? "Active" : "Error"}
+                    <span className={`status-pill ${client.mailboxStatus === "Active" ? "healthy" : "needs_reconnect"}`}>
+                      {client.mailboxStatus}
                     </span>
                   </div>
 
@@ -191,7 +191,7 @@ export default function ClientsPage() {
         <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Add Client Mailbox Connection</h2>
+              <h2>Add Client Mailbox Connection <span style={{fontSize: '0.75rem', fontWeight: 600, padding: '2px 8px', borderRadius: '4px', backgroundColor: '#e2e8f0', color: '#64748b', marginLeft: '8px'}}>Mock Only</span></h2>
               <button className="close-btn" onClick={() => setShowAddModal(false)}>
                 ✕
               </button>
@@ -227,7 +227,7 @@ export default function ClientsPage() {
                 <input
                   id="mailbox-input"
                   type="email"
-                  placeholder="e.g. rohan.m@zohomail.in"
+                  placeholder="e.g. rohan.m@applywizz.ai"
                   value={newClientMailbox}
                   onChange={(e) => setNewClientMailbox(e.target.value)}
                   required
@@ -626,6 +626,12 @@ export default function ClientsPage() {
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
+            gap: 12px;
+          }
+
+          .card-top-row > div:first-child {
+            min-width: 0;
+            flex: 1;
           }
 
           .m-client-name {
@@ -637,6 +643,8 @@ export default function ClientsPage() {
             font-size: 0.75rem;
             color: var(--text-muted);
             margin-top: 2px;
+            word-break: break-all;
+            overflow-wrap: break-word;
           }
 
           .card-mid-details {
@@ -650,10 +658,18 @@ export default function ClientsPage() {
             display: flex;
             align-items: center;
             justify-content: space-between;
+            gap: 12px;
           }
 
           .m-detail-row span {
             color: var(--text-muted);
+            flex-shrink: 0;
+          }
+
+          .m-detail-row strong {
+            word-break: break-all;
+            overflow-wrap: break-word;
+            text-align: right;
           }
 
           .card-bottom-counts {
