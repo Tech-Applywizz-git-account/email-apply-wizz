@@ -32,6 +32,54 @@ test.describe("ApplyWizard Email Operations Console Prototype E2E Tests", () => 
     });
   });
 
+  test("Phase 1 shared shell branding and responsive navigation", async ({ page }, testInfo) => {
+    await page.goto("/overview");
+    await page.waitForSelector(".ops-app-shell");
+
+    const tokens = await page.evaluate(() => {
+      const styles = getComputedStyle(document.documentElement);
+      return [
+        "--aw-navy",
+        "--aw-blue",
+        "--aw-green",
+        "--aw-coral",
+        "--aw-gray",
+        "--aw-text",
+        "--aw-deep-gray",
+      ].map((name) => styles.getPropertyValue(name).trim().toLowerCase());
+    });
+    expect(tokens).toEqual([
+      "#0b1d33",
+      "#2c76ff",
+      "#29fe29",
+      "#ff5c5c",
+      "#f5f5f5",
+      "#1e1e1e",
+      "#1a1a1a",
+    ]);
+
+    await expect(page.locator(".sidebar-brand")).toContainText("ApplyWizz");
+    await expect(page.locator(".sidebar-brand")).toContainText("Email Operations");
+    await assertNoHorizontalOverflow(page, "phase-1-shared-shell");
+
+    if (testInfo.project.name === "mobile") {
+      await expect(page.locator(".ops-sidebar")).toBeHidden();
+      await expect(page.locator(".mobile-bottom-nav .nav-text")).toHaveText([
+        "Overview",
+        "Clients",
+        "Mailboxes",
+        "Review",
+        "More",
+      ]);
+    } else if (testInfo.project.name === "tablet") {
+      await expect(page.locator(".ops-sidebar")).toHaveCSS("width", "72px");
+      await expect(page.locator(".sidebar-nav .nav-label").first()).toBeHidden();
+    } else {
+      await expect(page.locator(".ops-sidebar")).toHaveCSS("width", "260px");
+      await expect(page.locator(".sidebar-nav .nav-label").first()).toBeVisible();
+    }
+  });
+
   test("Overview Dashboard Flow", async ({ page }, testInfo) => {
     const viewport = testInfo.project.name;
     

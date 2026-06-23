@@ -3,10 +3,40 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Noto_Sans, Inter, Space_Grotesk } from "next/font/google";
+import {
+  IconOverview,
+  IconApplications,
+  IconClients,
+  IconMailboxes,
+  IconReviewQueue,
+  IconCAPortfolio,
+  IconMenu,
+  IconClose,
+  IconMore,
+} from "@/components/icons";
+
+const noto = Noto_Sans({
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700", "800"],
+  variable: "--font-noto-sans",
+});
+
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["500", "600"],
+  variable: "--font-inter",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-space-grotesk",
+});
 
 interface NavLinkProps {
   href: string;
-  icon: string;
+  icon: React.ReactNode;
   label: string;
   onClick?: () => void;
 }
@@ -19,6 +49,7 @@ function NavLink({ href, icon, label, onClick }: NavLinkProps) {
     <Link
       href={href}
       onClick={onClick}
+      aria-label={label}
       className={`nav-item ${isActive ? "active" : ""}`}
     >
       <span className="nav-icon">{icon}</span>
@@ -35,21 +66,49 @@ export default function OperationsLayout({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="ops-app-shell">
+    <div
+      className={`ops-app-shell ${noto.variable} ${inter.variable} ${spaceGrotesk.variable}`}
+    >
       {/* ── Desktop/Laptop Sidebar ── */}
       <aside className="ops-sidebar">
         <div className="sidebar-brand">
-          <span className="brand-dot" />
-          <span className="brand-text">ApplyWizard Ops</span>
+          <div className="brand-lockup">
+            <span className="brand-title">ApplyWizz</span>
+            <span className="brand-subtitle">Email Operations</span>
+          </div>
         </div>
 
         <nav className="sidebar-nav">
-          <NavLink href="/overview" icon="📊" label="Overview" />
-          <NavLink href="/applications" icon="📁" label="Applications" />
-          <NavLink href="/clients" icon="👥" label="Clients & Mailboxes" />
-          <NavLink href="/mailboxes" icon="🔌" label="Connections" />
-          <NavLink href="/review-queue" icon="📥" label="Review Queue" />
-          <NavLink href="/ca-portfolio" icon="👔" label="CA Portfolio" />
+          <NavLink
+            href="/overview"
+            icon={<IconOverview size={20} />}
+            label="Overview"
+          />
+          <NavLink
+            href="/applications"
+            icon={<IconApplications size={20} />}
+            label="Applications"
+          />
+          <NavLink
+            href="/clients"
+            icon={<IconClients size={20} />}
+            label="Clients & Mailboxes"
+          />
+          <NavLink
+            href="/mailboxes"
+            icon={<IconMailboxes size={20} />}
+            label="Connections"
+          />
+          <NavLink
+            href="/review-queue"
+            icon={<IconReviewQueue size={20} />}
+            label="Review Queue"
+          />
+          <NavLink
+            href="/ca-portfolio"
+            icon={<IconCAPortfolio size={20} />}
+            label="CA Portfolio"
+          />
         </nav>
 
         <div className="sidebar-footer">
@@ -66,36 +125,85 @@ export default function OperationsLayout({
       {/* ── Mobile Hamburger Header ── */}
       <header className="mobile-header">
         <div className="mobile-brand">
-          <span className="brand-dot" />
-          <span>ApplyWizard Ops</span>
+          <div className="brand-lockup">
+            <span className="brand-title">ApplyWizz</span>
+            <span className="brand-subtitle">Email Operations</span>
+          </div>
         </div>
         <button
+          type="button"
           className="hamburger-btn"
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           aria-label="Toggle Navigation Menu"
+          aria-expanded={mobileMenuOpen}
+          aria-controls="mobile-navigation-drawer"
         >
-          {mobileMenuOpen ? "✕" : "☰"}
+          {mobileMenuOpen ? <IconClose size={24} /> : <IconMenu size={24} />}
         </button>
       </header>
 
       {/* ── Mobile Drawer Overlay ── */}
       {mobileMenuOpen && (
-        <div className="mobile-drawer-overlay" onClick={() => setMobileMenuOpen(false)}>
-          <div className="mobile-drawer" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="mobile-drawer-overlay"
+          onClick={() => setMobileMenuOpen(false)}
+        >
+          <div
+            id="mobile-navigation-drawer"
+            className="mobile-drawer"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="drawer-header">
-              <span className="brand-dot" />
-              <span>ApplyWizard Ops</span>
-              <button className="close-btn" onClick={() => setMobileMenuOpen(false)}>
-                ✕
+              <div className="brand-lockup">
+                <span className="brand-title">ApplyWizz</span>
+                <span className="brand-subtitle">Email Operations</span>
+              </div>
+              <button
+                type="button"
+                className="close-btn"
+                onClick={() => setMobileMenuOpen(false)}
+                aria-label="Close menu"
+              >
+                <IconClose size={24} />
               </button>
             </div>
             <nav className="drawer-nav">
-              <NavLink href="/overview" icon="📊" label="Overview" onClick={() => setMobileMenuOpen(false)} />
-              <NavLink href="/applications" icon="📁" label="Applications" onClick={() => setMobileMenuOpen(false)} />
-              <NavLink href="/clients" icon="👥" label="Clients & Mailboxes" onClick={() => setMobileMenuOpen(false)} />
-              <NavLink href="/mailboxes" icon="🔌" label="Connections" onClick={() => setMobileMenuOpen(false)} />
-              <NavLink href="/review-queue" icon="📥" label="Review Queue" onClick={() => setMobileMenuOpen(false)} />
-              <NavLink href="/ca-portfolio" icon="👔" label="CA Portfolio" onClick={() => setMobileMenuOpen(false)} />
+              <NavLink
+                href="/overview"
+                icon={<IconOverview size={20} />}
+                label="Overview"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+              <NavLink
+                href="/applications"
+                icon={<IconApplications size={20} />}
+                label="Applications"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+              <NavLink
+                href="/clients"
+                icon={<IconClients size={20} />}
+                label="Clients & Mailboxes"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+              <NavLink
+                href="/mailboxes"
+                icon={<IconMailboxes size={20} />}
+                label="Connections"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+              <NavLink
+                href="/review-queue"
+                icon={<IconReviewQueue size={20} />}
+                label="Review Queue"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+              <NavLink
+                href="/ca-portfolio"
+                icon={<IconCAPortfolio size={20} />}
+                label="CA Portfolio"
+                onClick={() => setMobileMenuOpen(false)}
+              />
             </nav>
           </div>
         </div>
@@ -123,46 +231,83 @@ export default function OperationsLayout({
       {/* ── Mobile Bottom Navigation Bar ── */}
       <div className="mobile-bottom-nav">
         <Link href="/overview" className="bottom-nav-item">
-          <span className="nav-icon">📊</span>
+          <span className="nav-icon">
+            <IconOverview size={20} />
+          </span>
           <span className="nav-text">Overview</span>
         </Link>
-        <Link href="/applications" className="bottom-nav-item">
-          <span className="nav-icon">📁</span>
-          <span className="nav-text">Apps</span>
-        </Link>
-        <Link href="/review-queue" className="bottom-nav-item">
-          <span className="nav-icon">📥</span>
-          <span className="nav-text">Queue</span>
-        </Link>
         <Link href="/clients" className="bottom-nav-item">
-          <span className="nav-icon">👥</span>
+          <span className="nav-icon">
+            <IconClients size={20} />
+          </span>
           <span className="nav-text">Clients</span>
         </Link>
+        <Link href="/mailboxes" className="bottom-nav-item">
+          <span className="nav-icon">
+            <IconMailboxes size={20} />
+          </span>
+          <span className="nav-text">Mailboxes</span>
+        </Link>
+        <Link href="/review-queue" className="bottom-nav-item">
+          <span className="nav-icon">
+            <IconReviewQueue size={20} />
+          </span>
+          <span className="nav-text">Review</span>
+        </Link>
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen(true)}
+          className="bottom-nav-item bottom-nav-btn"
+          aria-label="More navigation options"
+        >
+          <span className="nav-icon">
+            <IconMore size={20} />
+          </span>
+          <span className="nav-text">More</span>
+        </button>
       </div>
 
       <style jsx global>{`
         /* ── Design Tokens & Base Resets ── */
         :root {
-          --navy-sidebar: #0f172a;
-          --navy-sidebar-hover: #1e293b;
-          --workspace-bg: #f8fafc;
+          --aw-navy: #0B1D33;
+          --aw-blue: #2C76FF;
+          --aw-green: #29FE29;
+          --aw-coral: #FF5C5C;
+          --aw-gray: #F5F5F5;
+          --aw-text: #1E1E1E;
+          --aw-deep-gray: #1A1A1A;
+          --aw-success-text: #15803D;
+
+          --font-display: var(--font-noto-sans), system-ui, -apple-system, sans-serif;
+          --font-btn-label: var(--font-inter), system-ui, sans-serif;
+          --font-brand: var(--font-space-grotesk), system-ui, sans-serif;
+
+          --navy-sidebar: var(--aw-navy);
+          --navy-sidebar-hover: #172b4d;
+          --workspace-bg: var(--aw-gray);
           --white: #ffffff;
-          --primary-blue: #2563eb;
-          --primary-blue-hover: #1d4ed8;
-          --success-green: #16a34a;
-          --success-green-bg: #dcfce7;
+          --primary-blue: var(--aw-blue);
+          --primary-blue-hover: #1a54c7;
+
+          /* Green Accessibility Rules */
+          --success-green-fill: var(--aw-green);
+          --success-green-text: var(--aw-success-text);
+          --success-green-bg: rgba(41, 254, 41, 0.15); /* Light translucent fill */
+
           --pending-orange: #ea580c;
           --pending-orange-bg: #ffedd5;
-          --urgent-red: #dc2626;
+          --urgent-red: var(--aw-coral);
           --urgent-red-bg: #fee2e2;
           --border-gray: #e2e8f0;
-          --text-dark: #0f172a;
+          --text-dark: var(--aw-text);
           --text-muted: #64748b;
           --text-light: #94a3b8;
           --sidebar-text-active: #ffffff;
-          --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
-          --card-shadow-hover: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-          --font-display: 'Inter', system-ui, -apple-system, sans-serif;
+          --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.05),
+            0 1px 2px rgba(0, 0, 0, 0.03);
+          --card-shadow-hover: 0 4px 6px -1px rgba(0, 0, 0, 0.05),
+            0 2px 4px -1px rgba(0, 0, 0, 0.03);
         }
 
         * {
@@ -171,18 +316,42 @@ export default function OperationsLayout({
           padding: 0;
         }
 
+        body,
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6 {
+          font-family: ${noto.style.fontFamily}, system-ui, -apple-system, sans-serif;
+        }
+
         body {
-          font-family: var(--font-display);
           background-color: var(--workspace-bg);
           color: var(--text-dark);
           -webkit-font-smoothing: antialiased;
         }
 
+        /* Set proper typography for buttons and labels */
+        button,
+        .btn,
+        .nav-item,
+        .bottom-nav-item,
+        .badge,
+        .caption,
+        .small-label {
+          font-family: var(--font-btn-label);
+        }
+
         /* ── Main Layout Shell ── */
         .ops-app-shell {
           display: flex;
+          width: 100%;
+          max-width: 100%;
           min-height: 100vh;
           position: relative;
+          overflow-x: hidden;
+          font-family: ${noto.style.fontFamily}, system-ui, -apple-system, sans-serif;
         }
 
         /* ── Sidebar (Desktop / Laptop) ── */
@@ -204,23 +373,32 @@ export default function OperationsLayout({
           height: 64px;
           display: flex;
           align-items: center;
-          gap: 10px;
           padding: 0 24px;
           border-bottom: 1px solid rgba(255, 255, 255, 0.06);
           color: #ffffff;
-          font-weight: 700;
-          font-size: 1.15rem;
           white-space: nowrap;
           overflow: hidden;
         }
 
-        .brand-dot {
-          width: 8px;
-          height: 8px;
-          background-color: var(--primary-blue);
-          border-radius: 50%;
-          flex-shrink: 0;
-          box-shadow: 0 0 8px var(--primary-blue);
+        .brand-lockup {
+          display: flex;
+          min-width: 0;
+          flex-direction: column;
+          font-family: var(--font-brand);
+          line-height: 1.15;
+        }
+
+        .brand-title {
+          font-size: 1.2rem;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+        }
+
+        .brand-subtitle {
+          color: var(--text-light);
+          font-size: 0.6875rem;
+          font-weight: 500;
+          letter-spacing: 0.01em;
         }
 
         .sidebar-nav {
@@ -256,7 +434,9 @@ export default function OperationsLayout({
         }
 
         .nav-icon {
-          font-size: 1.15rem;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
           flex-shrink: 0;
         }
 
@@ -317,6 +497,8 @@ export default function OperationsLayout({
           flex-direction: column;
           transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
           min-width: 0;
+          max-width: 100%;
+          overflow-x: hidden;
         }
 
         .workspace-header {
@@ -360,7 +542,7 @@ export default function OperationsLayout({
           gap: 8px;
           font-size: 0.8125rem;
           font-weight: 600;
-          color: var(--success-green);
+          color: var(--success-green-text);
           background-color: var(--success-green-bg);
           padding: 4px 12px;
           border-radius: 9999px;
@@ -369,20 +551,29 @@ export default function OperationsLayout({
         .pulse-indicator {
           width: 6px;
           height: 6px;
-          background-color: var(--success-green);
+          background-color: var(--success-green-text);
           border-radius: 50%;
           animation: pulse-glow 2s infinite;
         }
 
         @keyframes pulse-glow {
-          0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.7); }
-          70% { box-shadow: 0 0 0 6px rgba(22, 163, 74, 0); }
-          100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+          0% {
+            box-shadow: 0 0 0 0 rgba(21, 128, 61, 0.7);
+          }
+          70% {
+            box-shadow: 0 0 0 6px rgba(21, 128, 61, 0);
+          }
+          100% {
+            box-shadow: 0 0 0 0 rgba(21, 128, 61, 0);
+          }
         }
 
         .workspace-content {
           padding: 32px;
           flex: 1;
+          min-width: 0;
+          max-width: 100%;
+          overflow-x: hidden;
         }
 
         /* ── Mobile Layout Specific Components ── */
@@ -407,7 +598,10 @@ export default function OperationsLayout({
             width: 72px;
           }
 
-          .sidebar-brand .brand-text,
+          .sidebar-brand {
+            display: none;
+          }
+
           .nav-item .nav-label,
           .user-profile .user-details {
             display: none;
@@ -461,7 +655,7 @@ export default function OperationsLayout({
 
           .ops-workspace {
             margin-left: 0;
-            padding-bottom: 72px; /* Margin to prevent bottom-nav overlaps */
+            padding-bottom: 80px; /* Margin to prevent bottom-nav overlaps */
           }
 
           .workspace-header {
@@ -490,16 +684,22 @@ export default function OperationsLayout({
           .mobile-brand {
             display: flex;
             align-items: center;
-            gap: 8px;
-            font-weight: 700;
+          }
+
+          .mobile-brand .brand-title,
+          .drawer-header .brand-title {
             font-size: 1rem;
+          }
+
+          .mobile-brand .brand-subtitle,
+          .drawer-header .brand-subtitle {
+            font-size: 0.625rem;
           }
 
           .hamburger-btn {
             background: none;
             border: none;
             color: #ffffff;
-            font-size: 1.5rem;
             cursor: pointer;
             width: 36px;
             height: 36px;
@@ -534,8 +734,15 @@ export default function OperationsLayout({
             color: var(--text-muted);
             font-size: 0.6875rem;
             font-weight: 600;
-            width: 25%;
+            flex: 1;
+            min-width: 0;
             height: 100%;
+          }
+
+          .bottom-nav-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
           }
 
           .bottom-nav-item .nav-icon {
@@ -558,6 +765,7 @@ export default function OperationsLayout({
             bottom: 0;
             left: 0;
             width: 280px;
+            max-width: calc(100vw - 32px);
             background-color: var(--navy-sidebar);
             display: flex;
             flex-direction: column;
@@ -565,8 +773,12 @@ export default function OperationsLayout({
           }
 
           @keyframes slideIn {
-            from { transform: translateX(-100%); }
-            to { transform: translateX(0); }
+            from {
+              transform: translateX(-100%);
+            }
+            to {
+              transform: translateX(0);
+            }
           }
 
           .drawer-header {
@@ -575,9 +787,7 @@ export default function OperationsLayout({
             display: flex;
             align-items: center;
             padding: 0 16px;
-            gap: 8px;
             color: #ffffff;
-            font-weight: 700;
             justify-content: space-between;
           }
 
@@ -585,7 +795,6 @@ export default function OperationsLayout({
             background: none;
             border: none;
             color: var(--text-light);
-            font-size: 1.25rem;
             cursor: pointer;
             width: 32px;
             height: 32px;
