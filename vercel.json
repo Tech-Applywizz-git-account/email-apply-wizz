@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/zoho/workflow/cron",
+      "schedule": "0 2 * * *"
+    }
+  ]
+}
