@@ -10,8 +10,11 @@
 
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { classifyEmail } from "@/lib/classify/emailClassification";
 import { tryRegexExtract } from "@/lib/classify/regexExtractor";
 import { classifyWithAI } from "@/lib/classify/aiClassifier";
+
+const DETERMINISTIC_CONFIDENCE_THRESHOLD = 0.8;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -269,16 +272,38 @@ export async function classifyEmails(): Promise<ClassifyResult> {
       const subject = details.subject || "(No Subject)";
       // bodyText is used for classification only — never stored or logged
       const bodyText = stripHtml(contentData.content || "");
+      const sender: string = emailRecord.sender ?? details.sender ?? "";
+      const receivedDate: string = emailRecord.received_at ?? "";
 
-      // Regex-first, AI fallback
-      let classification = tryRegexExtract({ subject, body: bodyText });
-      if (classification) {
+      // Step 1 — deterministic classifier (free, no API cost)
+      let classifier_source: "deterministic" | "regex" | "ai";
+      const deterministicResult = classifyEmail({ subject, body: bodyText, sender, receivedDate });
+      let classification;
+
+      if (
+        deterministicResult.category !== "unknown" &&
+        deterministicResult.confidence >= DETERMINISTIC_CONFIDENCE_THRESHOLD
+      ) {
+        classification = deterministicResult;
+        classifier_source = "deterministic";
         console.log(
-          `[Zoho Classify] Regex classified message ${messageId} as ${classification.category}`,
+          `[Zoho Classify] Deterministic classified message ${messageId} as ${classification.category}`,
         );
       } else {
-        console.log(`[Zoho Classify] Falling back to AI for message ${messageId}`);
-        classification = await classifyWithAI({ subject, body: bodyText });
+        // Step 2 — regex extractor (OTP/verify/account fast path)
+        const regexResult = tryRegexExtract({ subject, body: bodyText });
+        if (regexResult) {
+          classification = regexResult;
+          classifier_source = "regex";
+          console.log(
+            `[Zoho Classify] Regex classified message ${messageId} as ${classification.category}`,
+          );
+        } else {
+          // Step 3 — AI fallback
+          console.log(`[Zoho Classify] Falling back to AI for message ${messageId}`);
+          classification = await classifyWithAI({ subject, body: bodyText });
+          classifier_source = "ai";
+        }
       }
 
       const parsedDeadline = isValidISODate(classification.deadline)
@@ -294,6 +319,9 @@ export async function classifyEmails(): Promise<ClassifyResult> {
           needs_human_review: classification.needs_human_review,
           action_required: classification.action_required,
           deadline: parsedDeadline,
+          priority: (classification as { priority?: string }).priority ?? null,
+          reason: (classification as { reason?: string }).reason ?? null,
+          classifier_source,
           classified_at: new Date().toISOString(),
           classification_status: "classified",
           updated_at: new Date().toISOString(),
