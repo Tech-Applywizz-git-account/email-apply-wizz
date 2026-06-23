@@ -57,7 +57,7 @@ vi.mock("@/lib/supabase/server", () => ({
 
 const MOCK_CONNECTION = {
   zoho_account_id: "acct-001",
-  email_address: "test@applywizz.ai",
+  email_address: "test@applywizard.ai",
   access_token: "tok",
   access_token_expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
   refresh_token: "ref",

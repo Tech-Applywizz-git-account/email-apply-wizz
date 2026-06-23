@@ -98,7 +98,7 @@ describe("System protection — system_notification", () => {
     const r = make(
       "Reset your password",
       "Click the link below to reset your password.",
-      "support@applywizz.ai"
+      "support@applywizard.ai"
     );
     expect(r.category).toBe("system_notification");
   });

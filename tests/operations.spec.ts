@@ -134,7 +134,7 @@ test.describe("ApplyWizard Email Operations Console Prototype E2E Tests", () => 
     // 6. Verify details inside the application page
     await expect(page.locator(".subject-value")).toContainText("Google");
     await expect(page.locator(".subject-value")).toContainText("Software Engineer");
-    await expect(page.locator(".email-headers-section")).toContainText("rohan.m@applywizz.ai");
+    await expect(page.locator(".email-headers-section")).toContainText("rohan.m@applywizard.ai");
     await expect(page.locator(".meta-card:has-text('Client Context')")).toContainText("Amit Sharma");
     await expect(page.getByRole("button", { name: "Mark as Reviewed" })).toBeVisible();
 
@@ -157,7 +157,7 @@ test.describe("ApplyWizard Email Operations Console Prototype E2E Tests", () => 
 
     // 2. Verify details
     await expect(page.getByRole("heading", { name: "Rohan Mehta" })).toBeVisible();
-    await expect(page.locator(".profile-subtext")).toContainText("rohan.m@applywizz.ai");
+    await expect(page.locator(".profile-subtext")).toContainText("rohan.m@applywizard.ai");
     await expect(page.locator(".profile-meta-details")).toContainText("Amit Sharma");
     await expect(page.locator(".profile-top-row")).toContainText("Connected & Active");
 
