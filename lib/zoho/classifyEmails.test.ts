@@ -5,6 +5,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import type { ClassificationResult } from "@/lib/classify/types";
 
 // ── Shared mock state ─────────────────────────────────────────────────────────
@@ -463,6 +465,33 @@ describe("Phase 3D dry-run and mailbox guardrails (decision logic)", () => {
       expect(entryShape).not.toHaveProperty("bodyText");
       // The mock fetch exists only to stub the network call
       expect(entry).toBeDefined();
+    });
+  });
+
+  describe("Phase 4A safety: no mock client_id written in live path", () => {
+    it("classifyEmails.ts does not import or call mapRecipientToClient — mock data cannot reach DB", () => {
+      // Structural guard: if mapRecipientToClient is re-imported and called, it will write
+      // mock IDs from lib/mockData into production Supabase rows. This test fails the
+      // moment that import or call is re-added, forcing a deliberate decision.
+      const src: string = readFileSync(resolve(__dirname, "classifyEmails.ts"), "utf8");
+
+      // No import of mapRecipientToClient (import line would be: `import { mapRecipientToClient }`)
+      expect(src).not.toMatch(/import\s*\{[^}]*mapRecipientToClient[^}]*\}/);
+      // No function call (call would be: `mapRecipientToClient(`)
+      expect(src).not.toContain("mapRecipientToClient(");
+      // No mock data imports
+      expect(src).not.toContain("mockClients");
+      expect(src).not.toContain("mockData");
+    });
+
+    it("live path Supabase update payload hardcodes client_id: null", () => {
+      // Verify the literal null is in the source — not computed from a mapping call.
+      const src: string = readFileSync(resolve(__dirname, "classifyEmails.ts"), "utf8");
+
+      // The update payload must contain `client_id: null` as a literal
+      expect(src).toMatch(/client_id:\s*null/);
+      // And must NOT contain client_id assigned from a variable (mappingResult, etc.)
+      expect(src).not.toMatch(/client_id:\s*mapping/);
     });
   });
 });

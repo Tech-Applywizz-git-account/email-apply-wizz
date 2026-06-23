@@ -133,6 +133,8 @@ export default async function DashboardPage() {
         classification_status,
         updated_at
       `)
+      // exclude outgoing copies; keep NULL rows (pre-migration records)
+      .or("email_direction.eq.incoming,email_direction.is.null")
       .order("received_at", { ascending: false })
       .limit(50);
 

@@ -14,7 +14,8 @@ import { classifyEmail } from "@/lib/classify/emailClassification";
 import { tryRegexExtract } from "@/lib/classify/regexExtractor";
 import { classifyWithAI } from "@/lib/classify/aiClassifier";
 import { extractOriginalRecipient } from "@/lib/classify/extractRecipient";
-import { mapRecipientToClient } from "@/lib/zoho/mapRecipientToClient";
+// mapRecipientToClient is intentionally NOT used here: no real clients table exists in Supabase.
+// When a real clients table is migrated, import mapRecipientToClient and replace client_id: null.
 
 const DETERMINISTIC_CONFIDENCE_THRESHOLD = 0.8;
 
@@ -535,10 +536,6 @@ export async function classifyEmails(
         fromAddress: details.fromAddress ?? sender,
         trackerMailbox: connection.email_address,
       });
-      const mappingResult = mapRecipientToClient(
-        routingResult.originalRecipient,
-        routingResult.routingStatus,
-      );
       console.log(
         `[Zoho Classify] Routing message ${messageId}: ${routingResult.routingStatus} (${routingResult.reasonCode})`,
       );
@@ -590,12 +587,12 @@ export async function classifyEmails(
           priority: (classification as { priority?: string }).priority ?? null,
           reason: (classification as { reason?: string }).reason ?? null,
           classifier_source,
-          // routing fields
+          // routing fields — client_id always null until real clients table exists
           original_recipient: routingResult.originalRecipient,
           email_direction: routingResult.direction,
           routing_confidence: routingResult.routingConfidence,
           routing_status: routingResult.routingStatus,
-          client_id: mappingResult.clientId ?? null,
+          client_id: null,
           classified_at: new Date().toISOString(),
           classification_status: "classified",
           updated_at: new Date().toISOString(),
