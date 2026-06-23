@@ -32,6 +32,8 @@ export type SourcePortal =
 
 export type ReviewedBy = "regex_parser" | "primary_ai" | "deepseek" | "human";
 
+export type Priority = "critical" | "high" | "normal" | "low";
+
 export interface EmailInput {
   subject: string;
   body: string;
@@ -52,4 +54,5 @@ export interface ClassificationResult {
   reason: string;
   reviewed_by: ReviewedBy;
   needs_human_review: boolean;
+  priority?: Priority;
 }
