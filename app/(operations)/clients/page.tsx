@@ -3,17 +3,37 @@
 import React, { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { mockClients, mockCAs } from "@/lib/mockData";
+import {
+  IconClients,
+  IconMailboxes,
+  IconCheck,
+  IconMail,
+  IconApplications,
+  IconWarning,
+  IconSearch,
+} from "@/components/icons";
 
 export default function ClientsPage() {
   const router = useRouter();
 
   // ── States ──────────────────────────────────────────────────────────────────
   const [searchTerm, setSearchTerm] = useState("");
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [newClientName, setNewClientName] = useState("");
-  const [newClientEmail, setNewClientEmail] = useState("");
-  const [newClientMailbox, setNewClientMailbox] = useState("");
-  const [selectedCA, setSelectedCA] = useState(mockCAs[0]?.id || "");
+
+  // ── Computed Top Summary Metrics ──────────────────────────────────────────
+  const allClientsCount = mockClients.length;
+  const connectedMailboxesCount = mockClients.filter(
+    (c) => c.mailboxStatus === "Active" || c.mailboxStatus === "Needs Connection"
+  ).length;
+  const activeMailboxesCount = mockClients.filter(
+    (c) => c.mailboxStatus === "Active"
+  ).length;
+  const totalEmailsToday = mockClients.reduce((sum, c) => sum + c.emailsToday, 0);
+  const totalPendingClassification = mockClients.reduce(
+    (sum, c) => sum + c.pendingClassification, 0
+  );
+  const totalReviewRequired = mockClients.reduce(
+    (sum, c) => sum + c.reviewRequired, 0
+  );
 
   // ── Filter Clients ──────────────────────────────────────────────────────────
   const filteredClients = useMemo(() => {
@@ -28,28 +48,6 @@ export default function ClientsPage() {
     });
   }, [searchTerm]);
 
-  // ── Submit Add Client Handler ───────────────────────────────────────────────
-  const handleAddClientSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newClientName || !newClientEmail || !newClientMailbox) {
-      alert("Please fill in all fields.");
-      return;
-    }
-    
-    // Simulate successful addition
-    alert(
-      `Success! Mock client "${newClientName}" registered successfully.\n` +
-      `Mailbox: ${newClientMailbox}\n` +
-      `Assigned Advisor: ${mockCAs.find((ca) => ca.id === selectedCA)?.name}`
-    );
-    
-    // Reset state & close
-    setNewClientName("");
-    setNewClientEmail("");
-    setNewClientMailbox("");
-    setShowAddModal(false);
-  };
-
   return (
     <div className="clients-page-container">
       {/* Header bar */}
@@ -60,14 +58,83 @@ export default function ClientsPage() {
             Configure applicant client profiles, connect mailboxes, and track advisor assignments.
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
-          ➕ Add Client Mailbox
-        </button>
+        {/* Add Client Mailbox connection is hidden in current phase */}
       </header>
+
+      {/* ── Summary Metrics Row ── */}
+      <section className="metrics-grid">
+        <div className="metric-card">
+          <div className="metric-meta">
+            <span className="metric-icon">
+              <IconClients size={16} />
+            </span>
+            <span className="metric-title">All Clients</span>
+          </div>
+          <div className="metric-value">{allClientsCount}</div>
+          <div className="metric-trend text-muted">Registered profiles</div>
+        </div>
+
+        <div className="metric-card">
+          <div className="metric-meta">
+            <span className="metric-icon">
+              <IconMailboxes size={16} />
+            </span>
+            <span className="metric-title">Connected</span>
+          </div>
+          <div className="metric-value">{connectedMailboxesCount}</div>
+          <div className="metric-trend text-muted">Zoho integrations</div>
+        </div>
+
+        <div className="metric-card">
+          <div className="metric-meta">
+            <span className="metric-icon">
+              <IconCheck size={16} />
+            </span>
+            <span className="metric-title">Active</span>
+          </div>
+          <div className="metric-value">{activeMailboxesCount}</div>
+          <div className="metric-trend text-success">Healthy feeds</div>
+        </div>
+
+        <div className="metric-card">
+          <div className="metric-meta">
+            <span className="metric-icon">
+              <IconMail size={16} />
+            </span>
+            <span className="metric-title">Emails Today</span>
+          </div>
+          <div className="metric-value">{totalEmailsToday}</div>
+          <div className="metric-trend text-muted">Processed headers</div>
+        </div>
+
+        <div className="metric-card">
+          <div className="metric-meta">
+            <span className="metric-icon">
+              <IconApplications size={16} />
+            </span>
+            <span className="metric-title">Pending Class.</span>
+          </div>
+          <div className="metric-value">{totalPendingClassification}</div>
+          <div className="metric-trend text-pending">AI queue</div>
+        </div>
+
+        <div className="metric-card highlight-urgent">
+          <div className="metric-meta">
+            <span className="metric-icon">
+              <IconWarning size={16} />
+            </span>
+            <span className="metric-title">Review Required</span>
+          </div>
+          <div className="metric-value text-urgent">{totalReviewRequired}</div>
+          <div className="metric-trend text-urgent font-bold">Needs CA action</div>
+        </div>
+      </section>
 
       {/* Search control */}
       <section className="search-card">
-        <span className="search-icon">🔍</span>
+        <span className="search-icon">
+          <IconSearch size={18} />
+        </span>
         <input
           type="text"
           placeholder="Search by client name, email, Zoho mailbox, assigned CA..."
@@ -80,7 +147,9 @@ export default function ClientsPage() {
       <section className="clients-list-container">
         {filteredClients.length === 0 ? (
           <div className="empty-results-box">
-            <span className="empty-icon">👥</span>
+            <div className="empty-icon">
+              <IconClients size={48} style={{ margin: "0 auto 12px" }} />
+            </div>
             <h3>No Clients Found</h3>
             <p>No client records match your current search queries.</p>
           </div>
@@ -110,7 +179,13 @@ export default function ClientsPage() {
                       </td>
                       <td className="font-semibold">{client.mailbox}</td>
                       <td>
-                        <span className={`status-pill ${client.mailboxStatus === "Active" ? "healthy" : "needs_reconnect"}`}>
+                        <span
+                          className={`status-pill ${
+                            client.mailboxStatus === "Active"
+                              ? "healthy"
+                              : "needs_reconnect"
+                          }`}
+                        >
                           {client.mailboxStatus}
                         </span>
                       </td>
@@ -143,7 +218,13 @@ export default function ClientsPage() {
                       <div className="m-client-name">{client.name}</div>
                       <div className="m-client-email">{client.email}</div>
                     </div>
-                    <span className={`status-pill ${client.mailboxStatus === "Active" ? "healthy" : "needs_reconnect"}`}>
+                    <span
+                      className={`status-pill ${
+                        client.mailboxStatus === "Active"
+                          ? "healthy"
+                          : "needs_reconnect"
+                      }`}
+                    >
                       {client.mailboxStatus}
                     </span>
                   </div>
@@ -186,86 +267,6 @@ export default function ClientsPage() {
         )}
       </section>
 
-      {/* ── Mock Add Client Modal ── */}
-      {showAddModal && (
-        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Add Client Mailbox Connection <span style={{fontSize: '0.75rem', fontWeight: 600, padding: '2px 8px', borderRadius: '4px', backgroundColor: '#e2e8f0', color: '#64748b', marginLeft: '8px'}}>Mock Only</span></h2>
-              <button className="close-btn" onClick={() => setShowAddModal(false)}>
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleAddClientSubmit} className="modal-form">
-              <div className="form-group">
-                <label htmlFor="name-input">Client Name</label>
-                <input
-                  id="name-input"
-                  type="text"
-                  placeholder="e.g. Rohan Mehta"
-                  value={newClientName}
-                  onChange={(e) => setNewClientName(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="email-input">Client Personal Email</label>
-                <input
-                  id="email-input"
-                  type="email"
-                  placeholder="e.g. rohan@gmail.com"
-                  value={newClientEmail}
-                  onChange={(e) => setNewClientEmail(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="mailbox-input">Zoho Mailbox Email</label>
-                <input
-                  id="mailbox-input"
-                  type="email"
-                  placeholder="e.g. rohan.m@applywizz.ai"
-                  value={newClientMailbox}
-                  onChange={(e) => setNewClientMailbox(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="ca-select-form">Assigned Client Advisor</label>
-                <select
-                  id="ca-select-form"
-                  value={selectedCA}
-                  onChange={(e) => setSelectedCA(e.target.value)}
-                >
-                  {mockCAs.map((ca) => (
-                    <option key={ca.id} value={ca.id}>
-                      {ca.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-actions">
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setShowAddModal(false)}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary">
-                  Register Mailbox
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       <style jsx>{`
         .clients-page-container {
           display: flex;
@@ -282,16 +283,79 @@ export default function ClientsPage() {
         }
 
         .page-title {
-          font-family: 'Space Grotesk', sans-serif;
+          font-family: var(--font-brand);
           font-size: 1.85rem;
           font-weight: 700;
           color: var(--text-dark);
+          letter-spacing: -0.5px;
         }
 
         .page-subtitle {
           color: var(--text-muted);
           font-size: 0.95rem;
           margin-top: 4px;
+        }
+
+        /* ── Summary Cards Grid ── */
+        .metrics-grid {
+          display: grid;
+          grid-template-columns: repeat(6, 1fr);
+          gap: 16px;
+        }
+
+        .metric-card {
+          background-color: var(--white);
+          border: 1px solid var(--border-gray);
+          border-radius: 12px;
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          box-shadow: var(--card-shadow);
+        }
+
+        .metric-meta {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: var(--text-muted);
+          font-size: 0.8125rem;
+          font-weight: 600;
+        }
+
+        .metric-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--text-muted);
+        }
+
+        .metric-value {
+          font-size: 1.5rem;
+          font-weight: 700;
+          color: var(--text-dark);
+        }
+
+        .metric-trend {
+          font-size: 0.75rem;
+          color: var(--text-muted);
+        }
+
+        .text-success {
+          color: var(--success-green-text) !important;
+        }
+
+        .text-pending {
+          color: var(--pending-orange) !important;
+        }
+
+        .text-urgent {
+          color: var(--urgent-red) !important;
+        }
+
+        .highlight-urgent {
+          border-color: var(--urgent-red);
+          background-color: var(--urgent-red-bg);
         }
 
         /* ── Search Bar ── */
@@ -307,7 +371,9 @@ export default function ClientsPage() {
         }
 
         .search-icon {
-          font-size: 1.15rem;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
           color: var(--text-light);
         }
 
@@ -377,10 +443,6 @@ export default function ClientsPage() {
           font-feature-settings: "tnum";
         }
 
-        .text-urgent {
-          color: var(--urgent-red);
-        }
-
         /* Badges & Pills */
         .status-pill {
           display: inline-flex;
@@ -392,7 +454,7 @@ export default function ClientsPage() {
 
         .status-pill.healthy {
           background-color: var(--success-green-bg);
-          color: var(--success-green);
+          color: var(--success-green-text);
         }
 
         .status-pill.needs_reconnect {
@@ -424,15 +486,6 @@ export default function ClientsPage() {
           transition: background-color 0.2s;
         }
 
-        .btn-primary {
-          background-color: var(--primary-blue);
-          color: var(--white);
-        }
-
-        .btn-primary:hover {
-          background-color: var(--primary-blue-hover);
-        }
-
         .btn-secondary {
           background-color: var(--white);
           border: 1px solid var(--border-gray);
@@ -460,9 +513,10 @@ export default function ClientsPage() {
         }
 
         .empty-icon {
-          font-size: 3rem;
-          display: block;
+          display: flex;
+          justify-content: center;
           margin-bottom: 12px;
+          color: var(--text-light);
         }
 
         .empty-results-box h3 {
@@ -476,110 +530,18 @@ export default function ClientsPage() {
           margin-top: 8px;
         }
 
-        /* ── Modal Dialog Styles ── */
-        .modal-overlay {
-          position: fixed;
-          inset: 0;
-          background-color: rgba(0, 0, 0, 0.4);
-          z-index: 200;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          backdrop-filter: blur(4px);
-        }
-
-        .modal-card {
-          background-color: var(--white);
-          border-radius: 16px;
-          width: 100%;
-          max-width: 480px;
-          box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
-          overflow: hidden;
-          animation: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        @keyframes scaleUp {
-          from { opacity: 0; transform: scale(0.95); }
-          to { opacity: 1; transform: scale(1); }
-        }
-
-        .modal-header {
-          padding: 20px 24px;
-          border-bottom: 1px solid var(--border-gray);
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-
-        .modal-header h2 {
-          font-size: 1.125rem;
-          font-weight: 700;
-          color: var(--text-dark);
-        }
-
-        .close-btn {
-          background: none;
-          border: none;
-          font-size: 1.25rem;
-          color: var(--text-muted);
-          cursor: pointer;
-          width: 32px;
-          height: 32px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .modal-form {
-          padding: 24px;
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-        }
-
-        .form-group {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-
-        .form-group label {
-          font-size: 0.8125rem;
-          font-weight: 600;
-          color: var(--text-muted);
-        }
-
-        .form-group input,
-        .form-group select {
-          padding: 10px 14px;
-          border: 1px solid var(--border-gray);
-          border-radius: 8px;
-          background-color: var(--white);
-          color: var(--text-dark);
-          font-size: 0.875rem;
-          outline: none;
-          font-family: var(--font-display);
-        }
-
-        .form-group input:focus {
-          border-color: var(--primary-blue);
-        }
-
-        .form-actions {
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
-          gap: 12px;
-          margin-top: 12px;
-          border-top: 1px solid var(--border-gray);
-          padding-top: 16px;
-        }
-
         .mobile-cards-list {
           display: none;
         }
 
         /* ── Responsive Rules ── */
+        @media (max-width: 1200px) {
+          .metrics-grid {
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+          }
+        }
+
         @media (max-width: 1023px) {
           .ops-table th:nth-child(5),
           .ops-table td:nth-child(5),
@@ -595,10 +557,13 @@ export default function ClientsPage() {
             align-items: flex-start;
           }
 
-          .page-header .btn {
-            width: 100%;
-            display: flex;
-            justify-content: center;
+          .metrics-grid {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+          }
+
+          .metric-value {
+            font-size: 1.25rem;
           }
 
           .table-card {
