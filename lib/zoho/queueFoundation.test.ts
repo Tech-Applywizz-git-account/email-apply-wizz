@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import {
+  SAFE_REASON_FALLBACK,
+  UNSAFE_REASON_SQL_PATTERN,
+  reasonMatchesUnsafePolicy,
+} from "@/lib/classify/sanitizeReason";
 
 import {
   claimEmailsForClassification,
@@ -169,11 +174,35 @@ describe("queueFoundation", () => {
       "utf8",
     );
 
+    const rowBefore = {
+      id: "row-1",
+      reason: 'Provider output with access token marker and "quoted private excerpt"',
+      category: "recruiter_reply",
+      confidence: 0.82,
+      classification_status: "review",
+      classifier_source: "ai",
+      claimed_by: "worker-a",
+      claimed_at: "2026-06-30T04:00:00.000Z",
+      claim_expires_at: "2026-06-30T04:10:00.000Z",
+      original_recipient: "client@applywizard.ai",
+      routing_status: "routed",
+      updated_at: "2026-06-30T04:00:00.000Z",
+    };
+    const rowAfter = reasonMatchesUnsafePolicy(rowBefore.reason)
+      ? { ...rowBefore, reason: SAFE_REASON_FALLBACK }
+      : rowBefore;
+
     expect(migration).toContain("set reason = 'Classification reason redacted for safety.'");
     expect(migration).toContain("where reason is not null");
+    expect(migration).toContain(UNSAFE_REASON_SQL_PATTERN);
     expect(migration).not.toMatch(/set\s+category\s*=/i);
     expect(migration).not.toMatch(/set\s+confidence\s*=/i);
     expect(migration).not.toMatch(/set\s+classification_status\s*=/i);
     expect(migration).not.toMatch(/set\s+classifier_source\s*=/i);
+    expect(rowAfter.reason).toBe(SAFE_REASON_FALLBACK);
+    expect({
+      ...rowAfter,
+      reason: rowBefore.reason,
+    }).toEqual(rowBefore);
   });
 });

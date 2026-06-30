@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { SAFE_REASON_FALLBACK, sanitizeReason } from "./sanitizeReason";
+import {
+  MAX_INPUT_REASON_LENGTH,
+  SAFE_REASON_FALLBACK,
+  reasonMatchesUnsafePolicy,
+  sanitizeReason,
+} from "./sanitizeReason";
 
 describe("sanitizeReason", () => {
   it("redacts URLs", () => {
@@ -33,15 +38,40 @@ describe("sanitizeReason", () => {
     );
   });
 
+  it("redacts password-like markers", () => {
+    expect(sanitizeReason("Matched password reset flow in deterministic fallback.")).toBe(
+      "Matched [redacted-marker] reset flow in deterministic fallback.",
+    );
+  });
+
+  it("redacts secret-style keywords", () => {
+    expect(sanitizeReason("Contains access token marker from provider metadata.")).toBe(
+      "Contains [redacted-marker] marker from provider metadata.",
+    );
+  });
+
   it("caps reason length to a short maximum", () => {
-    const safe = sanitizeReason("Long safe reason ".repeat(12));
+    const safe = sanitizeReason("Long safe reason ".repeat(8));
     expect(safe.length).toBeLessThanOrEqual(96);
     expect(safe.endsWith("…")).toBe(true);
+  });
+
+  it("falls back to a generic safe reason for long suspicious text", () => {
+    expect(sanitizeReason("A".repeat(MAX_INPUT_REASON_LENGTH + 1))).toBe(
+      SAFE_REASON_FALLBACK,
+    );
   });
 
   it("falls back to a generic safe reason for raw provider output", () => {
     expect(sanitizeReason('{"reason":"raw provider output"}')).toBe(
       SAFE_REASON_FALLBACK,
     );
+  });
+
+  it("applies the shared unsafe policy to migration-style detections", () => {
+    expect(reasonMatchesUnsafePolicy("Contains provider output with access token marker.")).toBe(
+      true,
+    );
+    expect(reasonMatchesUnsafePolicy("Short generic classifier summary.")).toBe(false);
   });
 });
