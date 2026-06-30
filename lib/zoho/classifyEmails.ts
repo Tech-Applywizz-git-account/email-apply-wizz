@@ -14,6 +14,11 @@ import { classifyEmail } from "@/lib/classify/emailClassification";
 import { tryRegexExtract } from "@/lib/classify/regexExtractor";
 import { classifyWithAI } from "@/lib/classify/aiClassifier";
 import { extractOriginalRecipient } from "@/lib/classify/extractRecipient";
+import {
+  claimEmailsForClassification,
+  getRetryDisposition,
+  updateClaimedEmail,
+} from "@/lib/zoho/queueFoundation";
 // mapRecipientToClient is intentionally NOT used here: no real clients table exists in Supabase.
 // When a real clients table is migrated, import mapRecipientToClient and replace client_id: null.
 
@@ -86,6 +91,17 @@ export interface ClassifyOptions {
 }
 
 const MAX_DRY_RUN_BATCH = 10;
+
+function getTrackerMailboxOrThrow(): string {
+  const trackerMailbox = process.env.ZOHO_SYNC_MAILBOX?.toLowerCase().trim();
+  if (!trackerMailbox) {
+    throw new Error(
+      "ZOHO_SYNC_MAILBOX is not configured. Set it to the exact tracker mailbox address.",
+    );
+  }
+
+  return trackerMailbox;
+}
 
 function senderDomain(email: string): string {
   const at = email.lastIndexOf("@");
@@ -225,11 +241,20 @@ async function runDryRun(cfg: {
   mailBaseUrl: string;
 }): Promise<DryRunResult> {
   const supabase = createSupabaseServerClient();
+  const trackerMailbox = getTrackerMailboxOrThrow();
+  const normalizedMailbox = cfg.mailbox.toLowerCase().trim();
+
+  if (normalizedMailbox !== trackerMailbox) {
+    throw new Error(
+      "Dry-run mailbox must match the configured tracker mailbox exactly.",
+    );
+  }
 
   const { data: connection, error: connError } = await supabase
     .from("zoho_connections")
     .select("*")
     .eq("status", "active")
+    .eq("email_address", normalizedMailbox)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -255,8 +280,8 @@ async function runDryRun(cfg: {
   const { data: pendingEmails, error: pendingError } = await supabase
     .from("zoho_email_metadata")
     .select("*")
-    .eq("mailbox_email", cfg.mailbox)
-    .in("classification_status", ["pending", "failed"])
+    .eq("mailbox_email", normalizedMailbox)
+    .in("classification_status", ["pending", "retry_scheduled"])
     .order("received_at", { ascending: false })
     .limit(MAX_DRY_RUN_BATCH);
 
@@ -352,7 +377,7 @@ async function runDryRun(cfg: {
 
   console.log(`[Zoho DryRun] Complete — mailbox: ${senderDomain(cfg.mailbox)}, checked: ${rows.length}, classified: ${entries.length}`);
 
-  return { dry_run: true, mailbox: cfg.mailbox, checked: rows.length, entries };
+  return { dry_run: true, mailbox: normalizedMailbox, checked: rows.length, entries };
 }
 
 export async function classifyEmails(): Promise<ClassifyResult>;
@@ -407,12 +432,14 @@ export async function classifyEmails(
   }
 
   const supabase = createSupabaseServerClient();
+  const trackerMailbox = getTrackerMailboxOrThrow();
 
   // Fetch the active Zoho connection
   const { data: connection, error: connError } = await supabase
     .from("zoho_connections")
     .select("*")
     .eq("status", "active")
+    .eq("email_address", trackerMailbox)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -442,29 +469,59 @@ export async function classifyEmails(
 
   // ponytail: clamp 1–200; invalid/missing → 50
   const classifyMaxPerRun = Math.min(200, Math.max(1, parseInt(process.env.ZOHO_CLASSIFY_MAX_PER_RUN ?? "50", 10) || 50));
+  const workerId = `classify-${crypto.randomUUID()}`;
 
-  const { data: pendingEmails, error: pendingError } = await supabase
-    .from("zoho_email_metadata")
-    .select("*")
-    .eq("mailbox_email", connection.email_address)
-    .in("classification_status", ["pending", "failed"])
-    .order("received_at", { ascending: true })
-    .limit(classifyMaxPerRun);
-
-  if (pendingError) {
-    throw new Error(`Failed to query pending emails: ${pendingError.message}`);
-  }
+  const pendingEmails = await claimEmailsForClassification(
+    supabase as unknown as Parameters<typeof claimEmailsForClassification>[0],
+    connection.email_address,
+    workerId,
+    classifyMaxPerRun,
+  );
 
   const checkedCount = pendingEmails?.length ?? 0;
   let classifiedCount = 0;
   let failedCount = 0;
   let reviewRequiredCount = 0;
+  let skippedCount = 0;
 
   const zohoAccountId: string = connection.zoho_account_id;
 
+  async function scheduleFailure(
+    emailRecord: Record<string, unknown>,
+    errorCode: string,
+    errorMessage: string,
+  ): Promise<"retry_scheduled" | "dead_letter" | "stale_skip"> {
+    const nowIso = new Date().toISOString();
+    const disposition = getRetryDisposition(
+      Number(emailRecord.attempt_count ?? 0),
+      nowIso,
+    );
+
+    const updated = await updateClaimedEmail(
+      supabase as unknown as Parameters<typeof updateClaimedEmail>[0],
+      {
+        id: String(emailRecord.id),
+        workerId,
+        nowIso,
+        payload: {
+          classification_status: disposition.status,
+          next_retry_at: disposition.nextRetryAt,
+          dead_lettered_at: disposition.deadLetteredAt,
+          last_error_code: errorCode,
+          last_error_message_safe: errorMessage.slice(0, 500),
+          updated_at: nowIso,
+          claim_expires_at: null,
+        },
+      },
+    );
+
+    if (!updated) return "stale_skip";
+    return disposition.status;
+  }
+
   for (const emailRecord of pendingEmails ?? []) {
-    const messageId: string = emailRecord.message_id;
-    const folderId: string = emailRecord.folder_id;
+    const messageId = String(emailRecord.message_id ?? "");
+    const folderId = String(emailRecord.folder_id ?? "");
 
     try {
       const detailsUrl = `${mailBaseUrl}/accounts/${zohoAccountId}/folders/${folderId}/messages/${messageId}/details`;
@@ -489,11 +546,13 @@ export async function classifyEmails(
         console.error(
           `[Zoho Classify] Failed to fetch email from Zoho. Details: ${detailsRes.status}, Content: ${contentRes.status}`,
         );
-        await supabase
-          .from("zoho_email_metadata")
-          .update({ classification_status: "failed", updated_at: new Date().toISOString() })
-          .eq("id", emailRecord.id);
-        failedCount++;
+        const failureStatus = await scheduleFailure(
+          emailRecord,
+          "zoho_fetch_failed",
+          `details=${detailsRes.status},content=${contentRes.status}`,
+        );
+        if (failureStatus === "stale_skip") skippedCount++;
+        else failedCount++;
         continue;
       }
 
@@ -508,11 +567,13 @@ export async function classifyEmails(
           detailsPayload.status,
           contentPayload.status,
         );
-        await supabase
-          .from("zoho_email_metadata")
-          .update({ classification_status: "failed", updated_at: new Date().toISOString() })
-          .eq("id", emailRecord.id);
-        failedCount++;
+        const failureStatus = await scheduleFailure(
+          emailRecord,
+          "zoho_payload_failed",
+          "Zoho API returned non-success payload status.",
+        );
+        if (failureStatus === "stale_skip") skippedCount++;
+        else failedCount++;
         continue;
       }
 
@@ -526,8 +587,8 @@ export async function classifyEmails(
       const subject = details.subject || "(No Subject)";
       // bodyText is used for classification only — never stored or logged
       const bodyText = stripHtml(contentData.content || "");
-      const sender: string = emailRecord.sender ?? details.sender ?? "";
-      const receivedDate: string = emailRecord.received_at ?? "";
+      const sender = String(emailRecord.sender ?? details.sender ?? "");
+      const receivedDate = String(emailRecord.received_at ?? "");
 
       // ── Routing extraction (header fetch is best-effort; failure → unroutable, not failed) ──
       const rawHeaders = await fetchMessageHeaders(
@@ -579,40 +640,43 @@ export async function classifyEmails(
         ? classification.deadline
         : null;
 
-      const { error: updateError } = await supabase
-        .from("zoho_email_metadata")
-        .update({
-          category: classification.category,
-          confidence: classification.confidence,
-          source_portal: classification.source_portal,
-          needs_human_review: classification.needs_human_review,
-          action_required: classification.action_required,
-          deadline: parsedDeadline,
-          priority: (classification as { priority?: string }).priority ?? null,
-          reason: (classification as { reason?: string }).reason ?? null,
-          classifier_source,
-          // routing fields — client_id always null until real clients table exists
-          original_recipient: routingResult.originalRecipient,
-          email_direction: routingResult.direction,
-          routing_confidence: routingResult.routingConfidence,
-          routing_status: routingResult.routingStatus,
-          client_id: null,
-          classified_at: new Date().toISOString(),
-          classification_status: "classified",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", emailRecord.id);
+      const finalizedAt = new Date().toISOString();
+      const didUpdate = await updateClaimedEmail(
+        supabase as unknown as Parameters<typeof updateClaimedEmail>[0],
+        {
+          id: String(emailRecord.id),
+          workerId,
+          nowIso: finalizedAt,
+          payload: {
+            category: classification.category,
+            confidence: classification.confidence,
+            source_portal: classification.source_portal,
+            needs_human_review: classification.needs_human_review,
+            action_required: classification.action_required,
+            deadline: parsedDeadline,
+            priority: (classification as { priority?: string }).priority ?? null,
+            reason: (classification as { reason?: string }).reason ?? null,
+            classifier_source,
+            // routing fields — client_id always null until real clients table exists
+            original_recipient: routingResult.originalRecipient,
+            email_direction: routingResult.direction,
+            routing_confidence: routingResult.routingConfidence,
+            routing_status: routingResult.routingStatus,
+            client_id: null,
+            classified_at: finalizedAt,
+            classification_status: "classified",
+            next_retry_at: null,
+            dead_lettered_at: null,
+            last_error_code: null,
+            last_error_message_safe: null,
+            claim_expires_at: null,
+            updated_at: finalizedAt,
+          },
+        },
+      );
 
-      if (updateError) {
-        console.error(
-          `[Zoho Classify] Failed to save classification for message ${messageId}:`,
-          updateError.message,
-        );
-        await supabase
-          .from("zoho_email_metadata")
-          .update({ classification_status: "failed", updated_at: new Date().toISOString() })
-          .eq("id", emailRecord.id);
-        failedCount++;
+      if (!didUpdate) {
+        skippedCount++;
       } else {
         classifiedCount++;
         if (classification.needs_human_review) reviewRequiredCount++;
@@ -622,11 +686,13 @@ export async function classifyEmails(
         `[Zoho Classify] Error classifying message ${messageId}:`,
         error instanceof Error ? error.message : "Unknown error",
       );
-      await supabase
-        .from("zoho_email_metadata")
-        .update({ classification_status: "failed", updated_at: new Date().toISOString() })
-        .eq("id", emailRecord.id);
-      failedCount++;
+      const failureStatus = await scheduleFailure(
+        emailRecord,
+        "classification_exception",
+        error instanceof Error ? error.message : "Unknown error",
+      );
+      if (failureStatus === "stale_skip") skippedCount++;
+      else failedCount++;
     }
   }
 
@@ -634,5 +700,5 @@ export async function classifyEmails(
     `[Zoho Classify] Complete — checked: ${checkedCount}, classified: ${classifiedCount}, failed: ${failedCount}, review_required: ${reviewRequiredCount}`,
   );
 
-  return { checked: checkedCount, classified: classifiedCount, failed: failedCount, skipped: 0, review_required: reviewRequiredCount };
+  return { checked: checkedCount, classified: classifiedCount, failed: failedCount, skipped: skippedCount, review_required: reviewRequiredCount };
 }

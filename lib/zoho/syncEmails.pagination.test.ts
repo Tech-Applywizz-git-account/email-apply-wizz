@@ -1,18 +1,17 @@
 /**
  * Pagination behavior tests for syncEmails.
- * Tests multi-page fetching, oldest-first ordering, max-per-run cap,
- * duplicate safety, and backlog continuation.
+ * Verifies recent-first replay ingestion, checkpoint persistence, and dedupe.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-// ── Supabase mock ─────────────────────────────────────────────────────────────
-
-const mockConnectionSingle = vi.fn();
+const mockConnectionMaybeSingle = vi.fn();
+const mockCheckpointMaybeSingle = vi.fn();
+const mockCheckpointUpsert = vi.fn();
 const mockExistingIn = vi.fn();
-const mockUpsert = vi.fn();
+const mockMetadataUpsert = vi.fn();
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: () => ({
@@ -21,24 +20,37 @@ vi.mock("@/lib/supabase/server", () => ({
         return {
           select: () => ({
             eq: () => ({
-              eq: () => ({ maybeSingle: mockConnectionSingle }),
+              eq: () => ({
+                maybeSingle: mockConnectionMaybeSingle,
+              }),
             }),
           }),
           update: () => ({ eq: () => Promise.resolve({ error: null }) }),
         };
       }
-      // zoho_email_metadata
+
+      if (table === "zoho_sync_checkpoints") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: mockCheckpointMaybeSingle,
+            }),
+          }),
+          upsert: mockCheckpointUpsert,
+        };
+      }
+
       return {
         select: () => ({
-          eq: () => ({ in: mockExistingIn }),
+          eq: () => ({
+            in: mockExistingIn,
+          }),
         }),
-        upsert: mockUpsert,
+        upsert: mockMetadataUpsert,
       };
     },
   }),
 }));
-
-// ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const TRACKER_CONNECTION = {
   id: "conn-tracker",
@@ -50,55 +62,50 @@ const TRACKER_CONNECTION = {
   status: "active",
 };
 
-function makeMessages(count: number, startIndex = 0) {
-  return Array.from({ length: count }, (_, i) => ({
-    messageId: `msg-${startIndex + i}`,
-    sender: "client@example.com",
-    subject: `Email ${startIndex + i}`,
-    receivedTime: Date.now() - (startIndex + i) * 1000,
-    folderName: "Inbox",
-    folderId: "folder-1",
-  }));
-}
-
-function makeFetchPage(pages: unknown[][]) {
-  let call = 0;
-  return vi.fn().mockImplementation(() => {
-    const data = pages[call] ?? [];
-    call++;
-    return Promise.resolve({
-      ok: true,
-      json: () => Promise.resolve({ status: { code: 200 }, data }),
-    });
-  });
-}
-
 function setEnv(overrides: Record<string, string> = {}) {
   process.env.ZOHO_CLIENT_ID = "cid";
   process.env.ZOHO_CLIENT_SECRET = "csecret";
   process.env.ZOHO_ACCOUNTS_BASE_URL = "https://accounts.zoho.test";
   process.env.ZOHO_MAIL_BASE_URL = "https://mail.zoho.test";
   process.env.ZOHO_SYNC_MAILBOX = "tracker@applywizard.ai";
-  for (const [k, v] of Object.entries(overrides)) process.env[k] = v;
+  for (const [key, value] of Object.entries(overrides)) process.env[key] = value;
 }
 
 function clearEnv() {
-  for (const k of [
-    "ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_ACCOUNTS_BASE_URL",
-    "ZOHO_MAIL_BASE_URL", "ZOHO_SYNC_MAILBOX",
-    "ZOHO_SYNC_PAGE_SIZE", "ZOHO_SYNC_MAX_PER_RUN",
-  ]) delete process.env[k];
+  for (const key of [
+    "ZOHO_CLIENT_ID",
+    "ZOHO_CLIENT_SECRET",
+    "ZOHO_ACCOUNTS_BASE_URL",
+    "ZOHO_MAIL_BASE_URL",
+    "ZOHO_SYNC_MAILBOX",
+    "ZOHO_SYNC_PAGE_SIZE",
+    "ZOHO_SYNC_MAX_PER_RUN",
+  ]) {
+    delete process.env[key];
+  }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+function makeMessages(ids: string[], startedAt = Date.parse("2026-06-30T04:00:00.000Z")) {
+  return ids.map((id, index) => ({
+    messageId: id,
+    sender: "client@example.com",
+    subject: `Email ${id}`,
+    receivedTime: startedAt - index * 1000,
+    folderName: "Inbox",
+    folderId: "folder-1",
+    hasAttachment: "0",
+  }));
+}
 
-describe("syncEmails — pagination behavior", () => {
+describe("syncEmails recent replay", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockConnectionSingle.mockResolvedValue({ data: TRACKER_CONNECTION, error: null });
+    mockConnectionMaybeSingle.mockResolvedValue({ data: TRACKER_CONNECTION, error: null });
+    mockCheckpointMaybeSingle.mockResolvedValue({ data: null, error: null });
+    mockCheckpointUpsert.mockResolvedValue({ error: null });
     mockExistingIn.mockResolvedValue({ data: [], error: null });
-    mockUpsert.mockResolvedValue({ error: null });
+    mockMetadataUpsert.mockResolvedValue({ error: null });
   });
 
   afterEach(() => {
@@ -106,23 +113,8 @@ describe("syncEmails — pagination behavior", () => {
     clearEnv();
   });
 
-  it("fetches more than one page when first page is full", async () => {
-    setEnv({ ZOHO_SYNC_PAGE_SIZE: "3", ZOHO_SYNC_MAX_PER_RUN: "10" });
-    // Page 1: 3 messages (full), page 2: 2 messages (partial → end)
-    vi.stubGlobal("fetch", makeFetchPage([makeMessages(3), makeMessages(2, 3)]));
-
-    const { syncEmails } = await import("./syncEmails");
-    const result = await syncEmails();
-
-    expect(result.fetched).toBe(5);
-    expect(result.has_more).toBe(false);
-    // fetch called twice (two pages)
-    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("older emails are processed before newer emails (start=0 oldest-first via sortorder=asc)", async () => {
-    setEnv({ ZOHO_SYNC_PAGE_SIZE: "5" });
+  it("prioritizes newest pages and no longer requests sortorder=asc", async () => {
+    setEnv({ ZOHO_SYNC_PAGE_SIZE: "3", ZOHO_SYNC_MAX_PER_RUN: "3" });
     const capturedUrls: string[] = [];
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
       capturedUrls.push(url);
@@ -135,80 +127,87 @@ describe("syncEmails — pagination behavior", () => {
     const { syncEmails } = await import("./syncEmails");
     await syncEmails();
 
-    // First request must use start=0 with sortorder=asc
     expect(capturedUrls[0]).toContain("start=0");
-    expect(capturedUrls[0]).toContain("sortorder=asc");
+    expect(capturedUrls[0]).not.toContain("sortorder=asc");
   });
 
-  it("duplicate message IDs are not inserted twice — upsert uses onConflict", async () => {
-    setEnv({ ZOHO_SYNC_PAGE_SIZE: "5" });
-    const msgs = makeMessages(3);
-    // All three already exist in Supabase
-    mockExistingIn.mockResolvedValue({ data: msgs.map(m => ({ message_id: m.messageId })), error: null });
-    vi.stubGlobal("fetch", makeFetchPage([msgs]));
-
-    const { syncEmails } = await import("./syncEmails");
-    const result = await syncEmails();
-
-    expect(result.inserted).toBe(0);
-    expect(result.updated).toBe(3);
-    // Upsert still called — onConflict handles idempotency at DB level
-    expect(mockUpsert).toHaveBeenCalledTimes(1);
-  });
-
-  it("max-per-run stops safely and reports has_more=true when last page was full", async () => {
-    // maxPerRun=3, pageSize=3 — one full page hits the cap
-    setEnv({ ZOHO_SYNC_PAGE_SIZE: "3", ZOHO_SYNC_MAX_PER_RUN: "3" });
-    vi.stubGlobal("fetch", makeFetchPage([makeMessages(3)]));
-
-    const { syncEmails } = await import("./syncEmails");
-    const result = await syncEmails();
-
-    expect(result.fetched).toBe(3);
-    expect(result.has_more).toBe(true);
-    // Only one page fetched — stopped at cap
-    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("next run continues remaining backlog — already-seen emails counted as updated not inserted", async () => {
-    setEnv({ ZOHO_SYNC_PAGE_SIZE: "5" });
-    const msgs = makeMessages(3);
-    // Simulate: previous run already stored these messages
-    mockExistingIn.mockResolvedValue({ data: msgs.map(m => ({ message_id: m.messageId })), error: null });
-    vi.stubGlobal("fetch", makeFetchPage([msgs]));
-
-    const { syncEmails } = await import("./syncEmails");
-    const result = await syncEmails();
-
-    // All updated (not re-inserted) — idempotent
-    expect(result.updated).toBe(3);
-    expect(result.inserted).toBe(0);
-    expect(result.has_more).toBe(false);
-  });
-
-  it("offset advances correctly across pages — start param increases by page count", async () => {
-    setEnv({ ZOHO_SYNC_PAGE_SIZE: "2", ZOHO_SYNC_MAX_PER_RUN: "10" });
-    const capturedUrls: string[] = [];
-    let call = 0;
-    const pages = [makeMessages(2), makeMessages(2, 2), makeMessages(1, 4)];
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
-      capturedUrls.push(url);
-      const data = pages[call] ?? [];
-      call++;
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ status: { code: 200 }, data }),
-      });
+  it("persists the checkpoint from the newest message seen on the run", async () => {
+    setEnv({ ZOHO_SYNC_PAGE_SIZE: "2", ZOHO_SYNC_MAX_PER_RUN: "2" });
+    const page = makeMessages(["msg-200", "msg-199"]);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ status: { code: 200 }, data: page }),
     }));
 
     const { syncEmails } = await import("./syncEmails");
+    await syncEmails();
+
+    expect(mockCheckpointUpsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          mailbox_email: "tracker@applywizard.ai",
+          last_seen_message_id: "msg-200",
+        }),
+      ]),
+      expect.anything(),
+    );
+  });
+
+  it("replays recent pages after the checkpoint and dedupes already-seen messages", async () => {
+    setEnv({ ZOHO_SYNC_PAGE_SIZE: "2", ZOHO_SYNC_MAX_PER_RUN: "4" });
+    mockCheckpointMaybeSingle.mockResolvedValue({
+      data: {
+        mailbox_email: "tracker@applywizard.ai",
+        last_seen_message_id: "msg-101",
+        last_seen_received_at: "2026-06-30T04:00:00.000Z",
+      },
+      error: null,
+    });
+
+    const pages = [
+      makeMessages(["msg-101", "msg-100"]),
+      makeMessages(["msg-099"], Date.parse("2026-06-30T03:59:58.000Z")),
+    ];
+
+    let fetchIndex = 0;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ status: { code: 200 }, data: pages[fetchIndex++] ?? [] }),
+    })));
+
+    mockExistingIn
+      .mockResolvedValueOnce({
+        data: [{ message_id: "msg-101" }, { message_id: "msg-100" }],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: [{ message_id: "msg-099" }],
+        error: null,
+      });
+
+    const { syncEmails } = await import("./syncEmails");
     const result = await syncEmails();
 
-    expect(result.fetched).toBe(5);
-    // start values: 0, 2, 4
-    expect(capturedUrls[0]).toContain("start=0");
-    expect(capturedUrls[1]).toContain("start=2");
-    expect(capturedUrls[2]).toContain("start=4");
+    expect(result.inserted).toBe(0);
+    expect(result.updated).toBe(3);
+    expect((global.fetch as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+  });
+
+  it("never persists raw body text, raw headers, OTPs, or attachment contents in metadata upserts", async () => {
+    setEnv({ ZOHO_SYNC_PAGE_SIZE: "1", ZOHO_SYNC_MAX_PER_RUN: "1" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ status: { code: 200 }, data: makeMessages(["msg-otp"]) }),
+    }));
+
+    const { syncEmails } = await import("./syncEmails");
+    await syncEmails();
+
+    const firstCall = mockMetadataUpsert.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(firstCall[0]).not.toHaveProperty("content");
+    expect(firstCall[0]).not.toHaveProperty("body");
+    expect(firstCall[0]).not.toHaveProperty("raw_headers");
+    expect(firstCall[0]).not.toHaveProperty("otp");
+    expect(firstCall[0]).not.toHaveProperty("attachments");
   });
 });

@@ -12,21 +12,46 @@ vi.mock("server-only", () => ({}));
 // ── Shared mock state ─────────────────────────────────────────────────────────
 
 const mockMailboxSingle = vi.fn();
+const mockCheckpointSingle = vi.fn();
+const mockCheckpointUpsert = vi.fn();
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: () => ({
-    from: () => ({
-      select: () => ({
-        eq: (col: string, val: string) => ({
-          eq: (_col2: string, val2: string) => ({
-            maybeSingle: () => mockMailboxSingle(col, val, val2),
+    from: (table: string) => {
+      if (table === "zoho_connections") {
+        return {
+          select: () => ({
+            eq: (col: string, val: string) => ({
+              eq: (_col2: string, val2: string) => ({
+                maybeSingle: () => mockMailboxSingle(col, val, val2),
+              }),
+              maybeSingle: () => mockMailboxSingle(col, val),
+            }),
           }),
-          maybeSingle: () => mockMailboxSingle(col, val),
+          update: () => ({ eq: () => Promise.resolve({ error: null }) }),
+        };
+      }
+
+      if (table === "zoho_sync_checkpoints") {
+        return {
+          select: () => ({
+            eq: (_col: string, val: string) => ({
+              maybeSingle: () => mockCheckpointSingle(val),
+            }),
+          }),
+          upsert: mockCheckpointUpsert,
+        };
+      }
+
+      return {
+        select: () => ({
+          eq: () => ({
+            in: () => Promise.resolve({ data: [], error: null }),
+          }),
         }),
-      }),
-      update: () => ({ eq: () => Promise.resolve({ error: null }) }),
-      upsert: () => Promise.resolve({ error: null }),
-    }),
+        upsert: () => Promise.resolve({ error: null }),
+      };
+    },
   }),
 }));
 
@@ -77,6 +102,8 @@ function clearEnvVars() {
 describe("syncEmails — ZOHO_SYNC_MAILBOX targeting", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCheckpointSingle.mockResolvedValue({ data: null, error: null });
+    mockCheckpointUpsert.mockResolvedValue({ error: null });
   });
 
   afterEach(() => {
@@ -273,13 +300,13 @@ describe("syncEmails — ZOHO_SYNC_PAGE_SIZE", () => {
     expect(capturedUrl).toContain("limit=25");
   });
 
-  it("URL includes sortorder=asc for oldest-first processing", async () => {
+  it("URL omits sortorder=asc so newest pages are prioritized", async () => {
     setEnvVars("tracker@applywizard.ai");
     stubFetchCapture();
 
     const { syncEmails } = await import("./syncEmails");
     await syncEmails();
 
-    expect(capturedUrl).toContain("sortorder=asc");
+    expect(capturedUrl).not.toContain("sortorder=asc");
   });
 });

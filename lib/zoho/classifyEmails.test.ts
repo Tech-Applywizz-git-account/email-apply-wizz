@@ -37,12 +37,14 @@ vi.mock("@/lib/supabase/server", () => ({
     from: (table: string) => ({
       select: () => ({
         eq: () => ({
-          order: () => ({
-            limit: () => ({
-              maybeSingle: () =>
-                table === "zoho_connections"
-                  ? Promise.resolve({ data: MOCK_CONNECTION, error: null })
-                  : Promise.resolve({ data: null, error: null }),
+          eq: () => ({
+            order: () => ({
+              limit: () => ({
+                maybeSingle: () =>
+                  table === "zoho_connections"
+                    ? Promise.resolve({ data: MOCK_CONNECTION, error: null })
+                    : Promise.resolve({ data: null, error: null }),
+              }),
             }),
           }),
         }),
@@ -98,9 +100,11 @@ function makeSupabaseMock(pendingRows: unknown[]) {
         return {
           select: () => ({
             eq: () => ({
-              order: () => ({
-                limit: () => ({
-                  maybeSingle: () => Promise.resolve({ data: MOCK_CONNECTION, error: null }),
+              eq: () => ({
+                order: () => ({
+                  limit: () => ({
+                    maybeSingle: () => Promise.resolve({ data: MOCK_CONNECTION, error: null }),
+                  }),
                 }),
               }),
             }),
@@ -153,6 +157,7 @@ function makeZohoFetchResponse(subject: string, bodyHtml: string, sender: string
 describe("Phase 3C pipeline decision logic", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.ZOHO_SYNC_MAILBOX = "test@applywizard.ai";
   });
 
   describe("deterministic classifier wins at high confidence", () => {
@@ -314,6 +319,10 @@ describe("Phase 3C pipeline decision logic", () => {
       expect(call).not.toHaveProperty("body");
       expect(call).not.toHaveProperty("bodyText");
       expect(call).not.toHaveProperty("content");
+      expect(call).not.toHaveProperty("rawHeaders");
+      expect(call).not.toHaveProperty("headerContent");
+      expect(call).not.toHaveProperty("verification_code");
+      expect(call).not.toHaveProperty("attachments");
     });
   });
 });
@@ -355,6 +364,18 @@ describe("Phase 3D dry-run and mailbox guardrails (decision logic)", () => {
       await expect(
         classifyEmails({ dryRun: true, mailbox: "a@x.com;b@x.com" }),
       ).rejects.toThrow(/only one mailbox/i);
+    });
+
+    it("rejects dry-run when the mailbox does not match the configured tracker mailbox", async () => {
+      process.env.ZOHO_SYNC_MAILBOX = "tracker@applywizard.ai";
+      process.env.ZOHO_CLIENT_ID = "cid";
+      process.env.ZOHO_CLIENT_SECRET = "secret";
+      process.env.ZOHO_ACCOUNTS_BASE_URL = "https://accounts.zoho.test";
+      process.env.ZOHO_MAIL_BASE_URL = "https://mail.zoho.test";
+      const { classifyEmails } = await import("@/lib/zoho/classifyEmails");
+      await expect(
+        classifyEmails({ dryRun: true, mailbox: "other@applywizard.ai" }),
+      ).rejects.toThrow(/must match the configured tracker mailbox/i);
     });
   });
 
@@ -498,8 +519,9 @@ describe("Phase 3D dry-run and mailbox guardrails (decision logic)", () => {
       const src: string = readFileSync(resolve(__dirname, "classifyEmails.ts"), "utf8");
       // Env var must be read
       expect(src).toContain("ZOHO_CLASSIFY_MAX_PER_RUN");
-      // Variable must be used as the limit argument
-      expect(src).toMatch(/\.limit\(classifyMaxPerRun\)/);
+      // Variable must be used in the atomic claim call
+      expect(src).toContain("claimEmailsForClassification");
+      expect(src).toContain("classifyMaxPerRun");
       // Default must be 50
       expect(src).toContain('"50"');
     });

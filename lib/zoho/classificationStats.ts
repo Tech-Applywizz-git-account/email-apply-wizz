@@ -55,7 +55,7 @@ export async function getClassificationStats(): Promise<ClassificationStats> {
     countWhere(supabase, { classification_status: "classified", needs_human_review: true }),
     countWhere(supabase, { classification_status: "classified", category: "system_notification" }),
     countWhere(supabase, { classification_status: "classified", category: "spam_or_irrelevant" }),
-    countWhere(supabase, { classification_status: "failed" }),
+    countWhere(supabase, { classification_status: "dead_letter" }),
   ]);
 
   return {

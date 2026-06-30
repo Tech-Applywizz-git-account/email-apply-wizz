@@ -40,6 +40,15 @@ export interface SyncResult {
   has_more: boolean;
 }
 
+interface SyncCheckpointRow {
+  mailbox_email: string;
+  last_seen_message_id: string | null;
+  last_seen_received_at: string | null;
+  last_successful_sync_at?: string | null;
+}
+
+const RECENT_REPLAY_PAGES = 2;
+
 // ── Token refresh helper ───────────────────────────────────────────────────────
 
 async function refreshZohoToken(
@@ -181,20 +190,50 @@ export async function syncEmails(): Promise<SyncResult> {
   }
 
   const zohoAccountId: string = connection.zoho_account_id;
+  const { data: checkpointRow, error: checkpointError } = await supabase
+    .from("zoho_sync_checkpoints")
+    .select("mailbox_email,last_seen_message_id,last_seen_received_at,last_successful_sync_at")
+    .eq("mailbox_email", connection.email_address)
+    .maybeSingle();
 
-  // ── Paginated fetch loop (oldest-first) ──────────────────────────────────────
+  if (checkpointError) {
+    throw new Error(`Failed to query sync checkpoint: ${checkpointError.message}`);
+  }
+
+  const checkpoint = (checkpointRow ?? null) as SyncCheckpointRow | null;
+
+  // ── Paginated fetch loop (recent replay, newest-first) ──────────────────────
 
   let offset = 0;
   let totalFetched = 0;
   let totalInserted = 0;
   let totalUpdated = 0;
   let hasMore = false;
+  let pagesFetched = 0;
+  let newestMessageId: string | null = null;
+  let newestReceivedAt: string | null = null;
+
+  function toReceivedAt(item: ZohoEmailItem, fallbackIso: string): string {
+    const receivedTime = Number(item.receivedTime);
+    return Number.isFinite(receivedTime)
+      ? new Date(receivedTime).toISOString()
+      : fallbackIso;
+  }
+
+  function isStrictlyNewerThanCheckpoint(item: ZohoEmailItem): boolean {
+    if (!checkpoint?.last_seen_received_at) return true;
+
+    const itemReceivedAt = toReceivedAt(item, checkpoint.last_seen_received_at);
+    if (itemReceivedAt > checkpoint.last_seen_received_at) return true;
+    if (itemReceivedAt < checkpoint.last_seen_received_at) return false;
+
+    return checkpoint.last_seen_message_id !== item.messageId;
+  }
 
   while (totalFetched < maxPerRun) {
     // Never request more than remaining cap allows
     const thisLimit = Math.min(pageSize, maxPerRun - totalFetched);
-    // sortorder=asc: oldest-first so backlog is processed before newer arrivals
-    const emailsUrl = `${mailBaseUrl}/accounts/${zohoAccountId}/messages/view?limit=${thisLimit}&start=${offset}&sortorder=asc`;
+    const emailsUrl = `${mailBaseUrl}/accounts/${zohoAccountId}/messages/view?limit=${thisLimit}&start=${offset}`;
 
     console.log(
       `[Zoho Sync] Fetching page — limit: ${thisLimit}, start: ${offset}`,
@@ -218,6 +257,12 @@ export async function syncEmails(): Promise<SyncResult> {
     const messages = Array.isArray(parsedPayload.data) ? parsedPayload.data : [];
 
     if (messages.length === 0) break;
+    pagesFetched++;
+
+    if (!newestMessageId && messages[0]) {
+      newestMessageId = messages[0].messageId;
+      newestReceivedAt = toReceivedAt(messages[0], new Date().toISOString());
+    }
 
     // Determine which records already exist (idempotency check)
     const messageIds = messages.map((item) => item.messageId);
@@ -235,10 +280,7 @@ export async function syncEmails(): Promise<SyncResult> {
     const nowTime = new Date().toISOString();
 
     const upsertPayload = messages.map((item) => {
-      const receivedTime = Number(item.receivedTime);
-      const receivedAt = Number.isFinite(receivedTime)
-        ? new Date(receivedTime).toISOString()
-        : nowTime;
+      const receivedAt = toReceivedAt(item, nowTime);
       const hasAttachments =
         item.hasAttachment === "1" ||
         item.hasAttachment === 1 ||
@@ -288,6 +330,28 @@ export async function syncEmails(): Promise<SyncResult> {
       // Hit the per-run cap — there may be more emails on next run
       hasMore = true;
       break;
+    }
+
+    const hasNewerMessage = messages.some((item) => isStrictlyNewerThanCheckpoint(item));
+    if (checkpoint && pagesFetched >= RECENT_REPLAY_PAGES && !hasNewerMessage) {
+      break;
+    }
+  }
+
+  if (newestMessageId && newestReceivedAt) {
+    const checkpointPayload: SyncCheckpointRow = {
+      mailbox_email: connection.email_address,
+      last_seen_message_id: newestMessageId,
+      last_seen_received_at: newestReceivedAt,
+      last_successful_sync_at: new Date().toISOString(),
+    };
+
+    const { error: checkpointUpsertError } = await supabase
+      .from("zoho_sync_checkpoints")
+      .upsert([checkpointPayload], { onConflict: "mailbox_email" });
+
+    if (checkpointUpsertError) {
+      throw new Error(`Failed to persist sync checkpoint: ${checkpointUpsertError.message}`);
     }
   }
 
