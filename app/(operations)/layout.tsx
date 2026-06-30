@@ -219,13 +219,13 @@ export default function OperationsLayout({
         </Link>
         <Link href="/clients" className="bottom-nav-item">
           <span className="nav-icon">
-            <IconMailboxes size={20} />
+            <IconClients size={20} />
           </span>
           <span className="nav-text">Clients</span>
         </Link>
         <Link href="/operations" className="bottom-nav-item">
           <span className="nav-icon">
-            <IconClients size={20} />
+            <IconMailboxes size={20} />
           </span>
           <span className="nav-text">Operations</span>
         </Link>
@@ -917,51 +917,11 @@ export default function OperationsLayout({
           margin-top: 4px;
         }
 
-        .coo-mobile-card__stats {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 10px;
-          color: var(--text-muted);
-          font-size: 0.84rem;
-        }
-
         .coo-chip-row,
         .coo-chip-stack {
           display: flex;
           flex-wrap: wrap;
           gap: 6px;
-        }
-
-        .coo-flow {
-          display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
-          gap: 10px;
-        }
-
-        .coo-flow__step {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          min-height: 64px;
-          padding: 14px;
-          border: 1px solid var(--border-gray);
-          border-radius: 16px;
-          background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
-          font-weight: 600;
-          color: var(--text-dark);
-        }
-
-        .coo-flow__index {
-          width: 28px;
-          height: 28px;
-          border-radius: 999px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          background: rgba(44, 118, 255, 0.12);
-          color: var(--primary-blue);
-          font-size: 0.85rem;
-          flex-shrink: 0;
         }
 
         /* ── Responsive Rules (Media Queries) ── */

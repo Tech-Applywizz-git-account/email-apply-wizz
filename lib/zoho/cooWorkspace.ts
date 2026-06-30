@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import { sanitizeReason, SAFE_REASON_FALLBACK } from "@/lib/classify/sanitizeReason";
 import type { EmailCategory, Priority } from "@/lib/classify/types";
 import type { QueueStatus } from "@/lib/zoho/queueFoundation";
@@ -51,6 +52,18 @@ const DEFAULT_REVIEW_LIMIT = 50;
 const DEFAULT_QUEUE_LIMIT = 25;
 const DEFAULT_CLIENT_PAGE_LIMIT = 1000;
 const DEAD_LETTER_LABEL = "Dead Letter";
+const CLIENT_KEY_PREFIX = "ck_";
+const CLIENT_KEY_VERSION = "v1";
+const SAFE_ERROR_CODES = new Set([
+  "ZOHO_FETCH_FAILED",
+  "ZOHO_RATE_LIMITED",
+  "ZOHO_AUTH_FAILED",
+  "AI_TIMEOUT",
+  "AI_PROVIDER_UNAVAILABLE",
+  "AI_INVALID_JSON",
+  "SUPABASE_WRITE_FAILED",
+  "UNKNOWN_PROCESSING_ERROR",
+]);
 
 export type DatePreset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "custom";
 export type StageFilter = "all" | "awaiting_classification" | "classified_activity";
@@ -198,6 +211,7 @@ export interface OverviewWorkspaceData {
 export interface ClientDetailData {
   clientKey: string;
   originalRecipient: string;
+  hasRows: boolean;
   dateRange: WorkspaceDateRange;
   summary: {
     totalEmails: number;
@@ -301,6 +315,14 @@ interface SupabaseQuery {
 
 function normalizeEmail(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
+}
+
+function clientKeySecret(): Buffer {
+  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.CRON_SECRET;
+  if (!secret && process.env.NODE_ENV !== "test") {
+    throw new Error("COO client key secret is not configured.");
+  }
+  return createHash("sha256").update(secret ?? "coo-client-key-test-secret").digest();
 }
 
 function startOfUtcDay(now: Date): string {
@@ -414,18 +436,44 @@ function resolveDateRange(args?: {
 }
 
 export function buildClientKey(originalRecipient: string): string {
-  return `c_${Buffer.from(normalizeEmail(originalRecipient), "utf8").toString("base64url")}`;
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", clientKeySecret(), iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(normalizeEmail(originalRecipient), "utf8"),
+    cipher.final(),
+  ]);
+  const payload = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString("base64url");
+  return `${CLIENT_KEY_PREFIX}${CLIENT_KEY_VERSION}_${payload}`;
 }
 
 export function resolveClientRecipient(clientKey: string): string | null {
-  const encoded = clientKey.startsWith("c_") ? clientKey.slice(2) : clientKey;
+  if (!clientKey.startsWith(`${CLIENT_KEY_PREFIX}${CLIENT_KEY_VERSION}_`)) return null;
+  const encoded = clientKey.slice(`${CLIENT_KEY_PREFIX}${CLIENT_KEY_VERSION}_`.length);
   try {
-    const decoded = Buffer.from(encoded, "base64url").toString("utf8");
+    const payload = Buffer.from(encoded, "base64url");
+    if (payload.length <= 28) return null;
+    const iv = payload.subarray(0, 12);
+    const authTag = payload.subarray(12, 28);
+    const ciphertext = payload.subarray(28);
+    const decipher = createDecipheriv("aes-256-gcm", clientKeySecret(), iv);
+    decipher.setAuthTag(authTag);
+    const decoded = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
     const normalized = normalizeEmail(decoded);
     return normalized || null;
   } catch {
     return null;
   }
+}
+
+function sanitizeAction(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const sanitized = sanitizeReason(value);
+  return sanitized === "No classification reason provided." ? null : sanitized;
+}
+
+function safeErrorCode(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return SAFE_ERROR_CODES.has(value) ? value : "UNKNOWN_PROCESSING_ERROR";
 }
 
 function safeQueueStatusLabel(status: QueueStatus | string | null | undefined): string {
@@ -577,7 +625,7 @@ function toClientRowAggregate(
   const latestMeaningfulReceivedAt = latestMeaningfulRow?.received_at ?? null;
   const latestMeaningfulConfidence = latestMeaningfulRow?.confidence ?? null;
   const latestMeaningfulDeadline = latestMeaningfulRow?.deadline ?? null;
-  const latestMeaningfulActionRequired = latestMeaningfulRow?.action_required ?? null;
+  const latestMeaningfulActionRequired = sanitizeAction(latestMeaningfulRow?.action_required);
 
   const queueState =
     deadLetterCount > 0
@@ -670,7 +718,7 @@ function mapTimelineRow(row: EmailRow, now: Date): WorkspaceTimelineRow {
     confidence: row.confidence ?? null,
     receivedAt: row.received_at ?? row.created_at ?? new Date(now).toISOString(),
     deadline: row.deadline ?? null,
-    actionRequired: row.action_required ?? null,
+    actionRequired: sanitizeAction(row.action_required),
     safeReason: isReview ? sanitizeReason(row.reason ?? SAFE_REASON_FALLBACK) : null,
     queueAgeMinutes: queueAge,
     queueStatusLabel: safeQueueStatusLabel(row.classification_status),
@@ -691,8 +739,8 @@ function mapOperationsRow(row: EmailRow, now: Date): OperationsListRow {
     confidence: row.confidence ?? null,
     safeReason: row.classification_status === "review" ? sanitizeReason(row.reason ?? SAFE_REASON_FALLBACK) : null,
     deadline: row.deadline ?? null,
-    actionRequired: row.action_required ?? null,
-    lastErrorCode: row.last_error_code ?? null,
+    actionRequired: sanitizeAction(row.action_required),
+    lastErrorCode: safeErrorCode(row.last_error_code),
     nextRetryAt: row.next_retry_at ?? null,
     deadLetteredAt: row.dead_lettered_at ?? null,
   };
@@ -711,7 +759,7 @@ function mapReviewRow(row: EmailRow, now: Date): ReviewQueueRow {
     queueAgeMinutes: queueAge,
     queueAgeLabel: formatBacklogAge(queueAge),
     deadline: row.deadline ?? null,
-    actionRequired: row.action_required ?? null,
+    actionRequired: sanitizeAction(row.action_required),
     queueStatusLabel: safeQueueStatusLabel(row.classification_status),
   };
 }
@@ -844,7 +892,7 @@ function buildImportantActivity(rows: EmailRow[], now: Date): WorkspaceActivityR
         confidence: row.confidence ?? null,
         receivedAt: row.received_at ?? row.created_at ?? now.toISOString(),
         deadline: row.deadline ?? null,
-        actionRequired: row.action_required ?? null,
+        actionRequired: sanitizeAction(row.action_required),
         safeReason: row.classification_status === "review" ? sanitizeReason(row.reason ?? SAFE_REASON_FALLBACK) : null,
         queueAgeMinutes: queueAge,
         queueStatusLabel: safeQueueStatusLabel(row.classification_status),
@@ -1083,12 +1131,42 @@ export async function getClientDetailWorkspaceData(args?: {
   const summaryRow = toClientRowAggregate([...rows], now, dateRange.startIso, dateRange.endIso);
 
   if (!first || !summaryRow) {
-    return null;
+    return {
+      clientKey: args?.clientKey ?? buildClientKey(originalRecipient),
+      originalRecipient,
+      hasRows: false,
+      dateRange,
+      summary: {
+        totalEmails: 0,
+        newEmails: 0,
+        applications: 0,
+        interviews: 0,
+        assessments: 0,
+        offers: 0,
+        rejections: 0,
+        recruiterReplies: 0,
+        followUpNeeded: 0,
+        reviewCount: 0,
+        pendingCount: 0,
+        processingCount: 0,
+        retryScheduledCount: 0,
+        deadLetterCount: 0,
+        latestMeaningfulCategory: null,
+        latestMeaningfulReceivedAt: null,
+        latestMeaningfulConfidence: null,
+        latestMeaningfulDeadline: null,
+        latestMeaningfulActionRequired: null,
+        queueState: "All Clear",
+        urgency: "other",
+      },
+      timeline,
+    };
   }
 
   return {
     clientKey: args?.clientKey ?? buildClientKey(originalRecipient),
     originalRecipient,
+    hasRows: true,
     dateRange,
     summary: {
       totalEmails: summaryRow.totalEmails,
@@ -1311,7 +1389,7 @@ export async function getOverviewDashboardData(args?: {
       confidence: row.confidence ?? null,
       receivedAt: row.received_at ?? now.toISOString(),
       deadline: row.deadline ?? null,
-      actionRequired: row.action_required ?? null,
+      actionRequired: sanitizeAction(row.action_required),
       safeReason: row.classification_status === "review" ? sanitizeReason(row.reason ?? SAFE_REASON_FALLBACK) : null,
     } as OverviewActivityItemLegacy))
     .sort((left, right) => {

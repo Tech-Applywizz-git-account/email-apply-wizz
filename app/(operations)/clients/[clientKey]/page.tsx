@@ -106,9 +106,9 @@ export default async function ClientDetailPage({
   if (!data) {
     return (
       <main className="coo-page">
-        <SectionBlock title="Client not found" subtitle="The encoded client key did not resolve to a known original_recipient.">
+        <SectionBlock title="Invalid client link" subtitle="This client link could not be resolved.">
           <EmptyState
-            title="No client detail available."
+            title="Invalid client link"
             description="Return to the Clients page and open a row from the live list."
             action={<Link href="/clients" className="coo-inline-link">Back to Clients</Link>}
           />
@@ -198,8 +198,8 @@ export default async function ClientDetailPage({
       >
         {!data.timeline.length ? (
           <EmptyState
-            title="No timeline events in the selected range."
-            description="Try a wider date range to see client activity."
+            title={data.hasRows ? "No timeline events in the selected range." : "No activity in this date range."}
+            description={data.hasRows ? "Try a wider date range to see client activity." : "Try a wider range."}
           />
         ) : (
           <div className="coo-timeline">

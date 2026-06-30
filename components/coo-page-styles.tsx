@@ -292,6 +292,90 @@ export function CooPageStyles() {
         font-size: 0.9rem;
       }
 
+      .coo-dual-grid {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 18px;
+      }
+
+      .coo-system-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .coo-activity-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .coo-activity-card {
+        display: grid;
+        gap: 10px;
+        padding: 16px;
+        border: 1px solid var(--border-gray);
+        border-radius: 18px;
+        background: var(--white);
+        box-shadow: var(--card-shadow);
+      }
+
+      .coo-activity-card__top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: start;
+      }
+
+      .coo-activity-recipient {
+        font-weight: 700;
+        color: var(--text-dark);
+        word-break: break-word;
+      }
+
+      .coo-review-reason,
+      .coo-review-action {
+        color: var(--text-muted);
+        font-size: 0.85rem;
+      }
+
+      .coo-review-action {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .coo-flow {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .coo-flow__step {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 64px;
+        padding: 14px;
+        border: 1px solid var(--border-gray);
+        border-radius: 16px;
+        background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
+        font-weight: 600;
+        color: var(--text-dark);
+      }
+
+      .coo-flow__index {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(44, 118, 255, 0.12);
+        color: var(--primary-blue);
+        font-size: 0.85rem;
+        flex-shrink: 0;
+      }
+
       .coo-operations-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -372,6 +456,14 @@ export function CooPageStyles() {
         .coo-operations-grid {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
+
+        .coo-dual-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .coo-flow {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
       }
 
       @media (max-width: 768px) {
@@ -399,6 +491,11 @@ export function CooPageStyles() {
 
         .coo-mobile-grid {
           display: grid;
+        }
+
+        .coo-system-grid,
+        .coo-flow {
+          grid-template-columns: 1fr;
         }
       }
     `}</style>

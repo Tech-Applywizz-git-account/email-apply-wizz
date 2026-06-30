@@ -93,8 +93,11 @@ describe("cooWorkspace", () => {
   it("builds and resolves opaque client keys without exposing raw mailbox values", async () => {
     const { buildClientKey, resolveClientRecipient } = await import("./cooWorkspace");
     const key = buildClientKey("  Client-One@Example.Test ");
-    expect(key).toMatch(/^c_[A-Za-z0-9_-]+$/);
+    expect(key).toMatch(/^ck_v1_[A-Za-z0-9_-]+$/);
+    expect(key).not.toContain("client-one");
+    expect(key).not.toContain("Y2xpZW50LW9uZUBleGFtcGxlLnRlc3Q");
     expect(resolveClientRecipient(key)).toBe("client-one@example.test");
+    expect(resolveClientRecipient("c_Y2xpZW50LW9uZUBleGFtcGxlLnRlc3Q")).toBeNull();
   });
 
   it("overview aggregates exclude dead-letter rows from business counts and keep safe fields only", async () => {
@@ -112,7 +115,7 @@ describe("cooWorkspace", () => {
           created_at: "2026-06-30T10:01:00.000Z",
           classified_at: "2026-06-30T10:05:00.000Z",
           deadline: "2026-07-01",
-          action_required: "Accept offer",
+          action_required: "Accept offer at https://unsafe.example/code 123456 client-a@example.test",
           reason: "safe reason",
           next_retry_at: null,
           dead_lettered_at: null,
@@ -200,6 +203,9 @@ describe("cooWorkspace", () => {
     expect(data.metrics.applications).toBe(1);
     expect(data.metrics.deadLetter).toBe(1);
     expect(data.clientRows.find((row) => row.originalRecipient === "client-a@example.test")?.offers).toBe(1);
+    expect(data.clientRows.find((row) => row.originalRecipient === "client-a@example.test")?.latestMeaningfulActionRequired).not.toContain("https://unsafe.example");
+    expect(data.clientRows.find((row) => row.originalRecipient === "client-a@example.test")?.latestMeaningfulActionRequired).not.toContain("client-a@example.test");
+    expect(data.activityRows.find((row) => row.id === "offer-1")?.actionRequired).not.toContain("123456");
     expect(data.activityRows.every((row) => row.classificationStatus !== "dead_letter")).toBe(true);
     expect(Object.keys(data.clientRows[0] ?? {})).not.toContain("subject");
     expect(Object.keys(data.activityRows[0] ?? {})).not.toContain("body");
@@ -221,7 +227,7 @@ describe("cooWorkspace", () => {
           created_at: "2026-06-30T09:01:00.000Z",
           classified_at: "2026-06-30T09:10:00.000Z",
           deadline: null,
-          action_required: "Manual review",
+          action_required: "Manual review: contact client-review@example.test with token abcdefghijklmnopqrstuvwx",
           reason: "Classification reason redacted for safety.",
           next_retry_at: null,
           dead_lettered_at: null,
@@ -262,6 +268,8 @@ describe("cooWorkspace", () => {
 
     expect(detail?.originalRecipient).toBe("client-review@example.test");
     expect(detail?.timeline[0]?.safeReason).toBe("Classification reason redacted for safety.");
+    expect(detail?.timeline[0]?.actionRequired).not.toContain("client-review@example.test");
+    expect(detail?.timeline[0]?.actionRequired).not.toContain("abcdefghijklmnopqrstuvwx");
     expect(Object.keys(detail?.timeline[0] ?? {})).not.toContain("subject");
     expect(Object.keys(detail?.timeline[0] ?? {})).not.toContain("raw_headers");
 
@@ -273,6 +281,22 @@ describe("cooWorkspace", () => {
     expect(reviewQueue.count).toBe(1);
     expect(reviewQueue.rows).toHaveLength(1);
     expect(reviewQueue.rows[0]?.safeReason).toBe("Classification reason redacted for safety.");
+    expect(reviewQueue.rows[0]?.actionRequired).not.toContain("client-review@example.test");
+  });
+
+  it("returns a valid empty client detail for a safe token with no rows in the selected range", async () => {
+    const { getClientDetailWorkspaceData, buildClientKey } = await import("./cooWorkspace");
+    const data = await getClientDetailWorkspaceData({
+      supabase: createSupabaseMock([]) as never,
+      now: new Date("2026-06-30T12:00:00.000Z"),
+      clientKey: buildClientKey("empty-client@example.test"),
+      range: "today",
+    });
+
+    expect(data?.originalRecipient).toBe("empty-client@example.test");
+    expect(data?.hasRows).toBe(false);
+    expect(data?.summary.totalEmails).toBe(0);
+    expect(data?.timeline).toEqual([]);
   });
 
   it("operations backlog age uses first_seen_at and ignores classified/review/dead-letter rows", async () => {
@@ -354,7 +378,7 @@ describe("cooWorkspace", () => {
         next_retry_at: null,
         dead_lettered_at: "2026-06-01T09:30:00.000Z",
         claim_expires_at: null,
-        last_error_code: "UNKNOWN_PROCESSING_ERROR",
+        last_error_code: "RAW provider stack trace with https://unsafe.example",
         routing_status: "dead_letter",
         email_direction: "inbound",
       },
@@ -370,11 +394,22 @@ describe("cooWorkspace", () => {
     expect(data.review).toBe(1);
     expect(data.deadLetter).toBe(1);
     expect(data.oldestPending[0]?.queueStatus).toBe("pending");
+    expect(data.deadLetterRows[0]?.lastErrorCode).toBe("UNKNOWN_PROCESSING_ERROR");
   });
 
   it("navigation keeps CA Portfolio hidden from the live COO shell", () => {
     const layout = readFileSync(resolve(__dirname, "../../app/(operations)/layout.tsx"), "utf8");
     expect(layout).not.toContain("CA Portfolio");
     expect(layout).not.toContain("IconCAPortfolio");
+  });
+
+  it("keeps mobile card stats styling in the shared COO page styles only", () => {
+    const layout = readFileSync(resolve(__dirname, "../../app/(operations)/layout.tsx"), "utf8");
+    const styles = readFileSync(resolve(__dirname, "../../components/coo-page-styles.tsx"), "utf8");
+    expect(layout).not.toContain(".coo-mobile-card__stats");
+    expect(styles.match(/\.coo-mobile-card__stats/g)).toHaveLength(1);
+    expect(styles).toContain("grid-template-columns: repeat(2, minmax(0, 1fr));");
+    expect(styles).toContain(".coo-dual-grid");
+    expect(styles).toContain(".coo-flow");
   });
 });

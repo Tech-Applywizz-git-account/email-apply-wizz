@@ -57,6 +57,16 @@ function buildUrl(
   return query ? `/clients?${query}` : "/clients";
 }
 
+function formatDeadline(value: string | null): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeZone: "Asia/Kolkata",
+  }).format(parsed);
+}
+
 function toneForUrgency(value: string): "offer" | "interview" | "assessment" | "review" | "neutral" {
   if (value === "offer") return "offer";
   if (value === "interview") return "interview";
@@ -210,7 +220,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
                       <td>{row.newEmails}</td>
                       <td className="coo-update-cell">
                         <span>{row.latestUpdateLabel}</span>
-                        {row.latestMeaningfulDeadline ? <span className="coo-update-note">Deadline: {row.latestMeaningfulDeadline}</span> : null}
+                        {row.latestMeaningfulDeadline ? <span className="coo-update-note">Deadline: {formatDeadline(row.latestMeaningfulDeadline)}</span> : null}
                       </td>
                       <td>{row.interviews}</td>
                       <td>{row.assessments}</td>
