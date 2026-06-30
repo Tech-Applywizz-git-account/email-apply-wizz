@@ -80,6 +80,7 @@ function clearEnv() {
     "ZOHO_SYNC_MAILBOX",
     "ZOHO_SYNC_PAGE_SIZE",
     "ZOHO_SYNC_MAX_PER_RUN",
+    "ZOHO_SYNC_REPLAY_WINDOW_MINUTES",
   ]) {
     delete process.env[key];
   }
@@ -154,19 +155,24 @@ describe("syncEmails recent replay", () => {
   });
 
   it("replays recent pages after the checkpoint and dedupes already-seen messages", async () => {
-    setEnv({ ZOHO_SYNC_PAGE_SIZE: "2", ZOHO_SYNC_MAX_PER_RUN: "4" });
+    setEnv({
+      ZOHO_SYNC_PAGE_SIZE: "2",
+      ZOHO_SYNC_MAX_PER_RUN: "4",
+      ZOHO_SYNC_REPLAY_WINDOW_MINUTES: "30",
+    });
     mockCheckpointMaybeSingle.mockResolvedValue({
       data: {
         mailbox_email: "tracker@applywizard.ai",
         last_seen_message_id: "msg-101",
         last_seen_received_at: "2026-06-30T04:00:00.000Z",
+        last_successful_sync_at: "2026-06-30T04:05:00.000Z",
       },
       error: null,
     });
 
     const pages = [
       makeMessages(["msg-101", "msg-100"]),
-      makeMessages(["msg-099"], Date.parse("2026-06-30T03:59:58.000Z")),
+      makeMessages(["msg-099"], Date.parse("2026-06-30T03:50:00.000Z")),
     ];
 
     let fetchIndex = 0;
@@ -191,6 +197,40 @@ describe("syncEmails recent replay", () => {
     expect(result.inserted).toBe(0);
     expect(result.updated).toBe(3);
     expect((global.fetch as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses a time-based replay overlap window instead of a fixed two-page stop", async () => {
+    setEnv({
+      ZOHO_SYNC_PAGE_SIZE: "2",
+      ZOHO_SYNC_MAX_PER_RUN: "6",
+      ZOHO_SYNC_REPLAY_WINDOW_MINUTES: "15",
+    });
+    mockCheckpointMaybeSingle.mockResolvedValue({
+      data: {
+        mailbox_email: "tracker@applywizard.ai",
+        last_seen_message_id: "msg-301",
+        last_seen_received_at: "2026-06-30T04:00:00.000Z",
+        last_successful_sync_at: "2026-06-30T04:10:00.000Z",
+      },
+      error: null,
+    });
+
+    const pages = [
+      makeMessages(["msg-301", "msg-300"], Date.parse("2026-06-30T04:09:00.000Z")),
+      makeMessages(["msg-299", "msg-298"], Date.parse("2026-06-30T03:57:00.000Z")),
+      makeMessages(["msg-297"], Date.parse("2026-06-30T03:40:00.000Z")),
+    ];
+
+    let fetchIndex = 0;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ status: { code: 200 }, data: pages[fetchIndex++] ?? [] }),
+    })));
+
+    const { syncEmails } = await import("./syncEmails");
+    await syncEmails();
+
+    expect((global.fetch as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(3);
   });
 
   it("never persists raw body text, raw headers, OTPs, or attachment contents in metadata upserts", async () => {

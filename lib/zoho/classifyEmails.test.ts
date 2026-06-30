@@ -324,6 +324,17 @@ describe("Phase 3C pipeline decision logic", () => {
       expect(call).not.toHaveProperty("verification_code");
       expect(call).not.toHaveProperty("attachments");
     });
+
+    it("uses review status when a result still needs human review", () => {
+      const payload: Record<string, unknown> = {
+        needs_human_review: true,
+        classification_status: "review",
+      };
+      mockSupabaseUpdate(payload);
+      expect(mockSupabaseUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ classification_status: "review" }),
+      );
+    });
   });
 });
 
@@ -530,6 +541,17 @@ describe("Phase 3D dry-run and mailbox guardrails (decision logic)", () => {
       const src: string = readFileSync(resolve(__dirname, "classifyEmails.ts"), "utf8");
       expect(src).toContain("review_required");
       expect(src).toContain("reviewRequiredCount");
+    });
+
+    it("live path persists review instead of classified when human review is required", () => {
+      const src: string = readFileSync(resolve(__dirname, "classifyEmails.ts"), "utf8");
+      expect(src).toContain('classification.needs_human_review ? "review" : "classified"');
+    });
+
+    it("failure path persists only fixed safe messages, never raw exception text", () => {
+      const src: string = readFileSync(resolve(__dirname, "classifyEmails.ts"), "utf8");
+      expect(src).toContain("getSafeProcessingError");
+      expect(src).not.toContain("last_error_message_safe: errorMessage.slice(0, 500)");
     });
   });
 });

@@ -4,7 +4,9 @@ import { resolve } from "path";
 
 import {
   claimEmailsForClassification,
+  getFinalClassificationStatus,
   getRetryDisposition,
+  getSafeProcessingError,
   updateClaimedEmail,
 } from "@/lib/zoho/queueFoundation";
 
@@ -79,6 +81,33 @@ describe("queueFoundation", () => {
     expect(rpc.mock.calls[1][1]).toMatchObject({ p_worker_id: "worker-b" });
   });
 
+  it("maps needs_human_review rows to real review status", () => {
+    expect(getFinalClassificationStatus(true)).toBe("review");
+    expect(getFinalClassificationStatus(false)).toBe("classified");
+  });
+
+  it("uses fixed safe error messages and never stores raw exception text", () => {
+    const aiJson = getSafeProcessingError({
+      stage: "ai",
+      error: new Error("AI returned invalid JSON. Cannot parse classification result."),
+    });
+    expect(aiJson).toEqual({
+      code: "AI_INVALID_JSON",
+      message: "AI returned invalid JSON.",
+    });
+
+    const timeout = getSafeProcessingError({
+      stage: "ai",
+      error: new Error("ETIMEDOUT from provider with https://secret.example/token and otp 123456"),
+    });
+    expect(timeout).toEqual({
+      code: "AI_TIMEOUT",
+      message: "AI request timed out.",
+    });
+    expect(timeout.message).not.toContain("https://");
+    expect(timeout.message).not.toContain("123456");
+  });
+
   it("prevents stale workers from overwriting results after the claim lease expires", async () => {
     const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
     const gt = vi.fn(() => ({ select: () => ({ maybeSingle }) }));
@@ -111,13 +140,26 @@ describe("queueFoundation", () => {
     expect(migration).toContain("for update skip locked");
   });
 
-  it("migration reclaims expired claims and only selects pending or retry-scheduled rows", () => {
+  it("migration safely converts legacy failed rows before the new constraint is added", () => {
+    const migration = readFileSync(
+      resolve(__dirname, "../../supabase/migrations/202606300001_queue_foundation.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain("where classification_status = 'failed'");
+    expect(migration).toContain("classification_status = 'retry_scheduled'");
+    expect(migration).toContain("next_retry_at = now()");
+  });
+
+  it("migration reclaims expired processing claims and only one worker can take them", () => {
     const migration = readFileSync(
       resolve(__dirname, "../../supabase/migrations/202606300001_queue_foundation.sql"),
       "utf8",
     );
 
     expect(migration).toContain("claim_expires_at is null or claim_expires_at <= p_now");
-    expect(migration).toContain("classification_status in ('pending', 'retry_scheduled')");
+    expect(migration).toContain("classification_status in ('pending', 'retry_scheduled', 'processing')");
+    expect(migration).toContain("classification_status = 'processing'");
+    expect(migration).toContain("for update skip locked");
   });
 });

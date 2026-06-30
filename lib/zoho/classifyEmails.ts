@@ -17,6 +17,7 @@ import { extractOriginalRecipient } from "@/lib/classify/extractRecipient";
 import {
   claimEmailsForClassification,
   getRetryDisposition,
+  getSafeProcessingError,
   updateClaimedEmail,
 } from "@/lib/zoho/queueFoundation";
 // mapRecipientToClient is intentionally NOT used here: no real clients table exists in Supabase.
@@ -488,8 +489,7 @@ export async function classifyEmails(
 
   async function scheduleFailure(
     emailRecord: Record<string, unknown>,
-    errorCode: string,
-    errorMessage: string,
+    safeError: { code: string; message: string },
   ): Promise<"retry_scheduled" | "dead_letter" | "stale_skip"> {
     const nowIso = new Date().toISOString();
     const disposition = getRetryDisposition(
@@ -507,8 +507,8 @@ export async function classifyEmails(
           classification_status: disposition.status,
           next_retry_at: disposition.nextRetryAt,
           dead_lettered_at: disposition.deadLetteredAt,
-          last_error_code: errorCode,
-          last_error_message_safe: errorMessage.slice(0, 500),
+          last_error_code: safeError.code,
+          last_error_message_safe: safeError.message,
           updated_at: nowIso,
           claim_expires_at: null,
         },
@@ -548,8 +548,15 @@ export async function classifyEmails(
         );
         const failureStatus = await scheduleFailure(
           emailRecord,
-          "zoho_fetch_failed",
-          `details=${detailsRes.status},content=${contentRes.status}`,
+          getSafeProcessingError({
+            stage: "zoho",
+            statusCode:
+              detailsRes.status === 429 || contentRes.status === 429
+                ? 429
+                : detailsRes.status === 401 || detailsRes.status === 403 || contentRes.status === 401 || contentRes.status === 403
+                  ? detailsRes.status
+                  : undefined,
+          }),
         );
         if (failureStatus === "stale_skip") skippedCount++;
         else failedCount++;
@@ -569,8 +576,17 @@ export async function classifyEmails(
         );
         const failureStatus = await scheduleFailure(
           emailRecord,
-          "zoho_payload_failed",
-          "Zoho API returned non-success payload status.",
+          getSafeProcessingError({
+            stage: "zoho",
+            statusCode:
+              detailsPayload.status?.code === 429 || contentPayload.status?.code === 429
+                ? 429
+                : detailsPayload.status?.code === 401 || detailsPayload.status?.code === 403
+                  ? detailsPayload.status?.code
+                  : contentPayload.status?.code === 401 || contentPayload.status?.code === 403
+                    ? contentPayload.status?.code
+                    : undefined,
+          }),
         );
         if (failureStatus === "stale_skip") skippedCount++;
         else failedCount++;
@@ -639,7 +655,6 @@ export async function classifyEmails(
       const parsedDeadline = isValidISODate(classification.deadline)
         ? classification.deadline
         : null;
-
       const finalizedAt = new Date().toISOString();
       const didUpdate = await updateClaimedEmail(
         supabase as unknown as Parameters<typeof updateClaimedEmail>[0],
@@ -664,7 +679,7 @@ export async function classifyEmails(
             routing_status: routingResult.routingStatus,
             client_id: null,
             classified_at: finalizedAt,
-            classification_status: "classified",
+            classification_status: classification.needs_human_review ? "review" : "classified",
             next_retry_at: null,
             dead_lettered_at: null,
             last_error_code: null,
@@ -682,14 +697,29 @@ export async function classifyEmails(
         if (classification.needs_human_review) reviewRequiredCount++;
       }
     } catch (error) {
+      const safeError = getSafeProcessingError({
+        stage:
+          error instanceof Error && error.message.startsWith("Failed to update claimed email:")
+            ? "supabase"
+            : error instanceof Error && (
+                error.message.includes("invalid JSON") ||
+                error.message.includes("cannot parse") ||
+                error.message.includes("OPENAI") ||
+                error.message.includes("timed out") ||
+                error.message.includes("timeout") ||
+                error.message.includes("503") ||
+                error.message.includes("502")
+              )
+              ? "ai"
+              : "unknown",
+        error,
+      });
       console.error(
-        `[Zoho Classify] Error classifying message ${messageId}:`,
-        error instanceof Error ? error.message : "Unknown error",
+        `[Zoho Classify] Error classifying message ${messageId}: ${safeError.code}`,
       );
       const failureStatus = await scheduleFailure(
         emailRecord,
-        "classification_exception",
-        error instanceof Error ? error.message : "Unknown error",
+        safeError,
       );
       if (failureStatus === "stale_skip") skippedCount++;
       else failedCount++;

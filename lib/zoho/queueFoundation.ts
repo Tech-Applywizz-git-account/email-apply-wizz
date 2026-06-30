@@ -9,6 +9,21 @@ export type QueueStatus =
   | "review"
   | "dead_letter";
 
+export type SafeProcessingErrorCode =
+  | "ZOHO_FETCH_FAILED"
+  | "ZOHO_RATE_LIMITED"
+  | "ZOHO_AUTH_FAILED"
+  | "AI_TIMEOUT"
+  | "AI_PROVIDER_UNAVAILABLE"
+  | "AI_INVALID_JSON"
+  | "SUPABASE_WRITE_FAILED"
+  | "UNKNOWN_PROCESSING_ERROR";
+
+export interface SafeProcessingError {
+  code: SafeProcessingErrorCode;
+  message: string;
+}
+
 interface RpcClient {
   rpc: (
     fn: string,
@@ -41,6 +56,68 @@ export interface RetryDisposition {
   status: "retry_scheduled" | "dead_letter";
   nextRetryAt: string | null;
   deadLetteredAt: string | null;
+}
+
+export function getFinalClassificationStatus(
+  needsHumanReview: boolean,
+): "review" | "classified" {
+  return needsHumanReview ? "review" : "classified";
+}
+
+export function getSafeProcessingError(args: {
+  stage: "zoho" | "ai" | "supabase" | "unknown";
+  error?: unknown;
+  statusCode?: number;
+}): SafeProcessingError {
+  if (args.stage === "zoho") {
+    if (args.statusCode === 429) {
+      return { code: "ZOHO_RATE_LIMITED", message: "Zoho rate limit reached." };
+    }
+    if (args.statusCode === 401 || args.statusCode === 403) {
+      return { code: "ZOHO_AUTH_FAILED", message: "Zoho authentication failed." };
+    }
+    return { code: "ZOHO_FETCH_FAILED", message: "Zoho message fetch failed." };
+  }
+
+  if (args.stage === "supabase") {
+    return {
+      code: "SUPABASE_WRITE_FAILED",
+      message: "Supabase write failed.",
+    };
+  }
+
+  const message =
+    args.error instanceof Error ? args.error.message.toLowerCase() : "";
+
+  if (args.stage === "ai") {
+    if (
+      message.includes("timeout") ||
+      message.includes("timed out") ||
+      message.includes("etimedout") ||
+      message.includes("abort")
+    ) {
+      return { code: "AI_TIMEOUT", message: "AI request timed out." };
+    }
+    if (message.includes("invalid json") || message.includes("cannot parse")) {
+      return { code: "AI_INVALID_JSON", message: "AI returned invalid JSON." };
+    }
+    if (
+      message.includes("503") ||
+      message.includes("502") ||
+      message.includes("unavailable") ||
+      message.includes("overloaded")
+    ) {
+      return {
+        code: "AI_PROVIDER_UNAVAILABLE",
+        message: "AI provider unavailable.",
+      };
+    }
+  }
+
+  return {
+    code: "UNKNOWN_PROCESSING_ERROR",
+    message: "Unknown processing error.",
+  };
 }
 
 export function getRetryDisposition(

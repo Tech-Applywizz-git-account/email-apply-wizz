@@ -47,7 +47,7 @@ interface SyncCheckpointRow {
   last_successful_sync_at?: string | null;
 }
 
-const RECENT_REPLAY_PAGES = 2;
+const DEFAULT_REPLAY_WINDOW_MINUTES = 30;
 
 // ── Token refresh helper ───────────────────────────────────────────────────────
 
@@ -152,6 +152,17 @@ export async function syncEmails(): Promise<SyncResult> {
   const pageSize = Math.min(100, Math.max(1, parseInt(process.env.ZOHO_SYNC_PAGE_SIZE ?? "25", 10) || 25));
   // ponytail: clamp max per run 1–500; invalid/missing → 100
   const maxPerRun = Math.min(500, Math.max(1, parseInt(process.env.ZOHO_SYNC_MAX_PER_RUN ?? "100", 10) || 100));
+  // ponytail: fast-ingest overlap only; reconciliation/backfill stays separate
+  const replayWindowMinutes = Math.min(
+    240,
+    Math.max(
+      1,
+      parseInt(
+        process.env.ZOHO_SYNC_REPLAY_WINDOW_MINUTES ?? `${DEFAULT_REPLAY_WINDOW_MINUTES}`,
+        10,
+      ) || DEFAULT_REPLAY_WINDOW_MINUTES,
+    ),
+  );
 
   const supabase = createSupabaseServerClient();
 
@@ -202,14 +213,15 @@ export async function syncEmails(): Promise<SyncResult> {
 
   const checkpoint = (checkpointRow ?? null) as SyncCheckpointRow | null;
 
-  // ── Paginated fetch loop (recent replay, newest-first) ──────────────────────
+  // ── Paginated fetch loop (fast ingest, newest-first) ────────────────────────
+  // ponytail: this is a recent-overlap ingest path for fresh visibility.
+  // Full historical reconciliation belongs in a separate backfill worker.
 
   let offset = 0;
   let totalFetched = 0;
   let totalInserted = 0;
   let totalUpdated = 0;
   let hasMore = false;
-  let pagesFetched = 0;
   let newestMessageId: string | null = null;
   let newestReceivedAt: string | null = null;
 
@@ -220,15 +232,15 @@ export async function syncEmails(): Promise<SyncResult> {
       : fallbackIso;
   }
 
-  function isStrictlyNewerThanCheckpoint(item: ZohoEmailItem): boolean {
-    if (!checkpoint?.last_seen_received_at) return true;
-
-    const itemReceivedAt = toReceivedAt(item, checkpoint.last_seen_received_at);
-    if (itemReceivedAt > checkpoint.last_seen_received_at) return true;
-    if (itemReceivedAt < checkpoint.last_seen_received_at) return false;
-
-    return checkpoint.last_seen_message_id !== item.messageId;
+  function getReplayWindowStartIso(): string | null {
+    if (!checkpoint?.last_successful_sync_at) return null;
+    return new Date(
+      new Date(checkpoint.last_successful_sync_at).getTime() -
+        replayWindowMinutes * 60 * 1000,
+    ).toISOString();
   }
+
+  const replayWindowStartIso = getReplayWindowStartIso();
 
   while (totalFetched < maxPerRun) {
     // Never request more than remaining cap allows
@@ -257,8 +269,6 @@ export async function syncEmails(): Promise<SyncResult> {
     const messages = Array.isArray(parsedPayload.data) ? parsedPayload.data : [];
 
     if (messages.length === 0) break;
-    pagesFetched++;
-
     if (!newestMessageId && messages[0]) {
       newestMessageId = messages[0].messageId;
       newestReceivedAt = toReceivedAt(messages[0], new Date().toISOString());
@@ -332,8 +342,14 @@ export async function syncEmails(): Promise<SyncResult> {
       break;
     }
 
-    const hasNewerMessage = messages.some((item) => isStrictlyNewerThanCheckpoint(item));
-    if (checkpoint && pagesFetched >= RECENT_REPLAY_PAGES && !hasNewerMessage) {
+    const oldestMessageReceivedAt = toReceivedAt(
+      messages[messages.length - 1],
+      nowTime,
+    );
+    if (
+      replayWindowStartIso &&
+      oldestMessageReceivedAt < replayWindowStartIso
+    ) {
       break;
     }
   }

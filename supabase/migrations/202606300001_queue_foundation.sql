@@ -10,7 +10,15 @@ alter table public.zoho_email_metadata
   add column next_retry_at timestamptz,
   add column last_error_code text,
   add column last_error_message_safe text,
-  add column dead_lettered_at timestamptz,
+  add column dead_lettered_at timestamptz;
+
+update public.zoho_email_metadata
+set classification_status = 'retry_scheduled',
+    next_retry_at = now(),
+    updated_at = now()
+where classification_status = 'failed';
+
+alter table public.zoho_email_metadata
   add constraint zoho_email_metadata_classification_status_check
     check (
       classification_status in (
@@ -44,7 +52,7 @@ create index if not exists idx_zoho_email_metadata_queue_ready
     claim_expires_at,
     received_at
   )
-  where classification_status in ('pending', 'retry_scheduled');
+  where classification_status in ('pending', 'retry_scheduled', 'processing');
 
 create index if not exists idx_zoho_email_metadata_dashboard_latest
   on public.zoho_email_metadata (received_at desc);
@@ -73,11 +81,18 @@ as $$
     select id
     from public.zoho_email_metadata
     where mailbox_email = p_mailbox_email
-      and classification_status in ('pending', 'retry_scheduled')
+      and classification_status in ('pending', 'retry_scheduled', 'processing')
       and (
         classification_status = 'pending'
-        or next_retry_at is null
-        or next_retry_at <= p_now
+        or (
+          classification_status = 'retry_scheduled'
+          and (next_retry_at is null or next_retry_at <= p_now)
+        )
+        or (
+          classification_status = 'processing'
+          and claim_expires_at is not null
+          and claim_expires_at <= p_now
+        )
       )
       and (
         claim_expires_at is null or claim_expires_at <= p_now
