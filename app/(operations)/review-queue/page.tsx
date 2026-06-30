@@ -37,7 +37,7 @@ export default function ReviewQueuePage() {
       if (activeTab === "assessments") return item.derived.category === "assessment";
       if (activeTab === "replies") return item.derived.category === "recruiter_reply";
       if (activeTab === "followups") return item.derived.category === "follow_up_needed";
-      if (activeTab === "unknown") return item.derived.category === "unknown" || item.status === "failed";
+      if (activeTab === "unknown") return item.derived.category === "unknown" || item.status === "review";
       return true;
     });
   }, [queueItems, activeTab]);
@@ -106,7 +106,7 @@ export default function ReviewQueuePage() {
               Follow-ups ({queueItems.filter((i) => i.derived.category === "follow_up_needed").length})
             </button>
             <button className={`tab-btn ${activeTab === "unknown" ? "active" : ""}`} onClick={() => setActiveTab("unknown")}>
-              Failed ({queueItems.filter((i) => i.derived.category === "unknown" || i.status === "failed").length})
+              Review ({queueItems.filter((i) => i.derived.category === "unknown" || i.status === "review").length})
             </button>
           </div>
 

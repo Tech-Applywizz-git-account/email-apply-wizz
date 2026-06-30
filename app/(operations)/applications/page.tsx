@@ -53,9 +53,7 @@ function ApplicationsContent() {
       // 5. Status match (derived needs_human_review)
       const matchesStatus =
         selectedStatus === "all" ||
-        (selectedStatus === "classified" && !app.derived.needs_human_review) ||
-        (selectedStatus === "review" && app.derived.needs_human_review) ||
-        (selectedStatus === "failed" && app.status === "failed");
+        app.status === selectedStatus;
 
       return matchesSearch && matchesCA && matchesClient && matchesCategory && matchesStatus;
     });
@@ -131,9 +129,12 @@ function ApplicationsContent() {
           <div className="filter-select-wrapper">
             <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)}>
               <option value="all">All Statuses</option>
+              <option value="pending">Pending</option>
+              <option value="processing">Processing</option>
+              <option value="retry_scheduled">Retry Scheduled</option>
               <option value="classified">Auto-Classified</option>
               <option value="review">Needs CA Review</option>
-              <option value="failed">Classification Failed</option>
+              <option value="dead_letter">Dead Letter</option>
             </select>
           </div>
         </div>

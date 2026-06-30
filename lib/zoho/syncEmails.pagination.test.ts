@@ -3,6 +3,9 @@
  * Verifies recent-first replay ingestion, checkpoint persistence, and dedupe.
  */
 
+import { readFileSync } from "fs";
+import { resolve } from "path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -231,6 +234,15 @@ describe("syncEmails recent replay", () => {
     await syncEmails();
 
     expect((global.fetch as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps replay-window env default and bounds in place", () => {
+    const src = readFileSync(resolve(__dirname, "syncEmails.ts"), "utf8");
+
+    expect(src).toContain("const DEFAULT_REPLAY_WINDOW_MINUTES = 30");
+    expect(src).toContain("process.env.ZOHO_SYNC_REPLAY_WINDOW_MINUTES");
+    expect(src).toContain("Math.min(\n    240,");
+    expect(src).toContain("Math.max(\n      1,");
   });
 
   it("never persists raw body text, raw headers, OTPs, or attachment contents in metadata upserts", async () => {
