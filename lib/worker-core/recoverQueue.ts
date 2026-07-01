@@ -1,11 +1,15 @@
 export interface RecoverQueueResult {
-  recovered: number;
+  checked: boolean;
+  recovered: number | null;
+  mode: "claim-cycle";
   note: string;
 }
 
 export async function recoverQueue(): Promise<RecoverQueueResult> {
   return {
-    recovered: 0,
-    note: "Expired claims are reclaimed by classifyQueue during atomic queue claims.",
+    checked: false,
+    recovered: null,
+    mode: "claim-cycle",
+    note: "No standalone recovery job ran. Expired processing claims are reclaimed atomically by classifyQueue through claim_zoho_email_rows.",
   };
 }

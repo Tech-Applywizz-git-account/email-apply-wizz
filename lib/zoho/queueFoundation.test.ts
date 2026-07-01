@@ -113,7 +113,7 @@ describe("queueFoundation", () => {
     expect(timeout.message).not.toContain("123456");
   });
 
-  it("prevents stale workers from overwriting results after the claim lease expires", async () => {
+  it("rejects stale worker writes after the claim lease expires", async () => {
     const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
     const gt = vi.fn(() => ({ select: () => ({ maybeSingle }) }));
     const eqStatus = vi.fn(() => ({ gt }));
@@ -133,6 +133,8 @@ describe("queueFoundation", () => {
     );
 
     expect(updated).toBe(false);
+    expect(eqWorker).toHaveBeenCalledWith("claimed_by", "worker-a");
+    expect(eqStatus).toHaveBeenCalledWith("classification_status", "processing");
     expect(gt).toHaveBeenCalledWith("claim_expires_at", "2026-06-30T04:00:00.000Z");
   });
 
@@ -156,16 +158,35 @@ describe("queueFoundation", () => {
     expect(migration).toContain("next_retry_at = now()");
   });
 
-  it("migration reclaims expired processing claims and only one worker can take them", () => {
+  it("migration claims pending, due retry, and expired processing rows atomically", () => {
     const migration = readFileSync(
       resolve(__dirname, "../../supabase/migrations/202606300001_queue_foundation.sql"),
       "utf8",
     );
 
-    expect(migration).toContain("claim_expires_at is null or claim_expires_at <= p_now");
-    expect(migration).toContain("classification_status in ('pending', 'retry_scheduled', 'processing')");
+    expect(migration).toContain("classification_status = 'pending'");
+    expect(migration).toContain("classification_status = 'retry_scheduled'");
+    expect(migration).toContain("next_retry_at is null or next_retry_at <= p_now");
     expect(migration).toContain("classification_status = 'processing'");
+    expect(migration).toContain("claim_expires_at is not null");
+    expect(migration).toContain("claim_expires_at <= p_now");
+    expect(migration).toContain("classification_status in ('pending', 'retry_scheduled', 'processing')");
+    expect(migration).toContain("claim_expires_at is null or claim_expires_at <= p_now");
     expect(migration).toContain("for update skip locked");
+  });
+
+  it("migration does not steal active processing or future retry rows", () => {
+    const migration = readFileSync(
+      resolve(__dirname, "../../supabase/migrations/202606300001_queue_foundation.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain("classification_status = 'processing'");
+    expect(migration).toContain("and claim_expires_at <= p_now");
+    expect(migration).toContain("claim_expires_at is null or claim_expires_at <= p_now");
+    expect(migration).toContain("classification_status = 'retry_scheduled'");
+    expect(migration).toContain("next_retry_at is null or next_retry_at <= p_now");
+    expect(migration).not.toContain("next_retry_at > p_now");
   });
 
   it("corrective reason migration only redacts unsafe reasons and preserves classification fields", () => {
