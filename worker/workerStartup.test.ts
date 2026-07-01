@@ -36,6 +36,19 @@ describe("worker startup", () => {
     expect(health.body.status).toBe("degraded");
   });
 
+  it("reports degraded health when no sync completed after startup grace", () => {
+    const state = createWorkerState(new Date("2026-07-01T00:00:00.000Z"));
+
+    const health = buildHealthPayload(
+      state,
+      new Date("2026-07-01T00:02:01.000Z"),
+    );
+
+    expect(health.httpStatus).toBe(503);
+    expect(health.body.status).toBe("degraded");
+    expect(health.body.last_sync_at).toBeNull();
+  });
+
   it("reports healthy after recent sync", () => {
     const state = createWorkerState();
     state.lastSyncAt = new Date("2026-07-01T00:04:30.000Z");
