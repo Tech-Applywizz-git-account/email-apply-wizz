@@ -8,8 +8,7 @@
  * Only log boolean success/failure and counts.
  */
 
-import "server-only";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/serviceRole";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -94,7 +93,7 @@ async function refreshZohoToken(
     throw new Error("Zoho returned incomplete data during token refresh.");
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = createSupabaseServiceRoleClient();
   const refreshTime = new Date();
   const newExpiresAt = new Date(refreshTime.getTime() + expiresIn * 1000);
 
@@ -164,7 +163,7 @@ export async function syncEmails(): Promise<SyncResult> {
     ),
   );
 
-  const supabase = createSupabaseServerClient();
+  const supabase = createSupabaseServiceRoleClient();
 
   // Fetch the active Zoho connection for the configured tracker mailbox only.
   // Explicit email_address filter prevents silent fallback to any other mailbox.

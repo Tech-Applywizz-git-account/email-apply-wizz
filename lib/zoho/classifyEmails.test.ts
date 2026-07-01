@@ -47,8 +47,8 @@ vi.mock("@/lib/zoho/queueFoundation", async () => {
   };
 });
 
-vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServerClient: () => ({
+vi.mock("@/lib/supabase/serviceRole", () => ({
+  createSupabaseServiceRoleClient: () => ({
     from: (table: string) => ({
       select: () => ({
         eq: () => ({

@@ -16,8 +16,8 @@ const mockCheckpointUpsert = vi.fn();
 const mockExistingIn = vi.fn();
 const mockMetadataUpsert = vi.fn();
 
-vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServerClient: () => ({
+vi.mock("@/lib/supabase/serviceRole", () => ({
+  createSupabaseServiceRoleClient: () => ({
     from: (table: string) => {
       if (table === "zoho_connections") {
         return {

@@ -15,8 +15,8 @@ const mockMailboxSingle = vi.fn();
 const mockCheckpointSingle = vi.fn();
 const mockCheckpointUpsert = vi.fn();
 
-vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServerClient: () => ({
+vi.mock("@/lib/supabase/serviceRole", () => ({
+  createSupabaseServiceRoleClient: () => ({
     from: (table: string) => {
       if (table === "zoho_connections") {
         return {

@@ -15,8 +15,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { syncEmails } from "@/lib/zoho/syncEmails";
-import { classifyEmails } from "@/lib/zoho/classifyEmails";
+import { syncTrackerMailbox } from "@/lib/worker-core/syncTrackerMailbox";
+import { classifyQueue } from "@/lib/worker-core/classifyQueue";
 import { acquireCronLock, releaseCronLock } from "@/lib/zoho/cronLock";
 
 export async function GET(req: NextRequest) {
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
     // Step 1 — Sync latest email metadata from Zoho
     let syncResult;
     try {
-      syncResult = await syncEmails();
+      syncResult = await syncTrackerMailbox();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown sync error";
       console.error("[Zoho Cron] Sync step failed:", message);
@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
     // Step 2 — Classify any newly inserted or retryable-failed records
     let classifyResult;
     try {
-      classifyResult = await classifyEmails();
+      classifyResult = await classifyQueue();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown classify error";
       console.error("[Zoho Cron] Classification step failed:", message);
