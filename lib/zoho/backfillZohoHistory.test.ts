@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runZohoHistoryBackfill, type BackfillDeps } from "./backfillZohoHistory";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+
+import {
+  runZohoHistoryBackfill,
+  toBackfillErrorCode,
+  type BackfillDeps,
+} from "./backfillZohoHistory";
 
 const connection = {
   id: "conn-1",
@@ -29,6 +36,10 @@ function messages(ids: string[]) {
     folderId: "folder-1",
     hasAttachment: "0",
   }));
+}
+
+function manyMessages(count: number) {
+  return messages(Array.from({ length: count }, (_, index) => `m${count - index}`));
 }
 
 function makeSupabase(existing: string[] = []) {
@@ -194,6 +205,69 @@ describe("runZohoHistoryBackfill", () => {
     expect(supabase.calls.checkpointUpsert).not.toHaveBeenCalled();
   });
 
+  it("real backfill rows land in a safe holding status", async () => {
+    const supabase = makeSupabase();
+
+    await runZohoHistoryBackfill(
+      opts({ pageSize: 1, maxPages: 1, dryRun: false, confirmProductionBackfill: true, startOffset: 0 }),
+      {
+        ...deps(() =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            json: () => Promise.resolve({ status: { code: 200 }, data: messages(["m1"]) }),
+          }),
+        ),
+        supabase: supabase.client,
+      },
+    );
+
+    const rows = supabase.calls.metadataUpsert.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(rows[0].classification_status).toBe("historical_ingested");
+  });
+
+  it("real backfill of 100 emails creates zero live-classifier eligible rows", async () => {
+    const supabase = makeSupabase();
+
+    await runZohoHistoryBackfill(
+      opts({ pageSize: 100, maxPages: 1, dryRun: false, confirmProductionBackfill: true, startOffset: 0 }),
+      {
+        ...deps(() =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            json: () => Promise.resolve({ status: { code: 200 }, data: manyMessages(100) }),
+          }),
+        ),
+        supabase: supabase.client,
+      },
+    );
+
+    const rows = supabase.calls.metadataUpsert.mock.calls[0][0] as Array<Record<string, unknown>>;
+    const claimable = rows.filter((row) =>
+      ["pending", "processing", "retry_scheduled"].includes(String(row.classification_status)),
+    );
+    expect(rows).toHaveLength(100);
+    expect(claimable).toHaveLength(0);
+  });
+
+  it("backfilled rows are not claimable by the live classifier", async () => {
+    const migration = readFileSync(
+      resolve(__dirname, "../../supabase/migrations/202606300001_queue_foundation.sql"),
+      "utf8",
+    );
+    const backfillMigration = readFileSync(
+      resolve(__dirname, "../../supabase/migrations/202607070002_allow_historical_ingested_status.sql"),
+      "utf8",
+    );
+
+    expect(backfillMigration).toContain("'historical_ingested'");
+    expect(migration).toContain("classification_status in ('pending', 'retry_scheduled', 'processing')");
+    expect(migration).not.toContain("'historical_ingested'");
+  });
+
   it("counts duplicates without inserting new identities", async () => {
     const d = deps(
       () =>
@@ -266,6 +340,53 @@ describe("runZohoHistoryBackfill", () => {
     );
   });
 
+  it("never touches the live sync checkpoint table", async () => {
+    const touchedTables: string[] = [];
+    const supabase = makeSupabase();
+    const originalFrom = supabase.client.from;
+    supabase.client.from = (table: string) => {
+      touchedTables.push(table);
+      return originalFrom(table);
+    };
+
+    await runZohoHistoryBackfill(
+      opts({ pageSize: 1, maxPages: 1, dryRun: false, confirmProductionBackfill: true, startOffset: 0 }),
+      {
+        ...deps(() =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            json: () => Promise.resolve({ status: { code: 200 }, data: messages(["m1"]) }),
+          }),
+        ),
+        supabase: supabase.client,
+      },
+    );
+
+    expect(touchedTables).not.toContain("zoho_sync_checkpoints");
+    expect(touchedTables).toContain("zoho_backfill_checkpoints");
+  });
+
+  it("stops exactly at BACKFILL_MAX_PAGES when every page is full", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ status: { code: 200 }, data: messages(["m2", "m1"]) }),
+    });
+
+    const result = await runZohoHistoryBackfill(
+      opts({ pageSize: 2, maxPages: 3, dryRun: true, startOffset: 0 }),
+      deps(fetchImpl),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(result.pages).toBe(3);
+    expect(result.fetched).toBe(6);
+    expect(result.nextStart).toBe(6);
+  });
+
   it("refuses real ingestion without the production confirmation flag", async () => {
     await expect(
       runZohoHistoryBackfill(
@@ -273,5 +394,25 @@ describe("runZohoHistoryBackfill", () => {
         deps(() => Promise.reject(new Error("should not fetch"))),
       ),
     ).rejects.toThrow("--confirm-production-backfill");
+  });
+
+  it("maps raw errors to fixed safe error codes without leaking text", () => {
+    const code = toBackfillErrorCode(
+      new Error("database failed for tracker@applywizard.ai token abc123 provider payload"),
+    );
+
+    expect(code).toBe("BACKFILL_UNKNOWN_ERROR");
+    expect(code).not.toContain("tracker@applywizard.ai");
+    expect(code).not.toContain("abc123");
+    expect(code).not.toContain("provider payload");
+  });
+
+  it("script catch path logs only safe error codes", () => {
+    const script = readFileSync(resolve(__dirname, "../../scripts/backfill-zoho-history.ts"), "utf8");
+
+    expect(script).toContain("toBackfillErrorCode(error)");
+    expect(script).toContain("failed code=");
+    expect(script).not.toContain("error.message");
+    expect(script).not.toContain("String(error)");
   });
 });

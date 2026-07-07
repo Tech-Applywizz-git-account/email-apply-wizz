@@ -2,6 +2,7 @@ import { createSupabaseServiceRoleClient } from "@/lib/supabase/serviceRole";
 import {
   optionsFromEnv,
   runZohoHistoryBackfill,
+  toBackfillErrorCode,
   type BackfillDeps,
 } from "@/lib/zoho/backfillZohoHistory";
 
@@ -28,6 +29,6 @@ async function main() {
 }
 
 main().catch((error: unknown) => {
-  console.error(`[Zoho Backfill] failed: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`[Zoho Backfill] failed code=${toBackfillErrorCode(error)}`);
   process.exitCode = 1;
 });

@@ -101,6 +101,38 @@ export type BackfillResult = {
 
 const DEFAULT_DELAY_MS = 1000;
 const MAX_RATE_LIMIT_RETRIES = 3;
+const BACKFILL_HOLDING_STATUS = "historical_ingested";
+
+export type BackfillErrorCode =
+  | "BACKFILL_ZOHO_AUTH_FAILED"
+  | "BACKFILL_ZOHO_FETCH_FAILED"
+  | "BACKFILL_SUPABASE_FAILED"
+  | "BACKFILL_RATE_LIMITED"
+  | "BACKFILL_CONFIG_INVALID"
+  | "BACKFILL_UNKNOWN_ERROR";
+
+export function toBackfillErrorCode(error: unknown): BackfillErrorCode {
+  const message = error instanceof Error ? error.message : "";
+  if (
+    message.includes("configuration") ||
+    message.includes("ZOHO_MAIL_BASE_URL") ||
+    message.includes("ZOHO_SYNC_MAILBOX") ||
+    message.includes("--confirm-production-backfill")
+  ) {
+    return "BACKFILL_CONFIG_INVALID";
+  }
+  if (message.includes("token refresh")) return "BACKFILL_ZOHO_AUTH_FAILED";
+  if (message.includes("rate limit")) return "BACKFILL_RATE_LIMITED";
+  if (message.includes("Zoho backfill messages request failed")) return "BACKFILL_ZOHO_FETCH_FAILED";
+  if (
+    message.includes("zoho_connections") ||
+    message.includes("metadata") ||
+    message.includes("checkpoint")
+  ) {
+    return "BACKFILL_SUPABASE_FAILED";
+  }
+  return "BACKFILL_UNKNOWN_ERROR";
+}
 
 function clampInt(value: number, fallback: number, min: number, max: number) {
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
@@ -317,16 +349,20 @@ export async function runZohoHistoryBackfill(
         has_attachments: hasAttachments,
         attachment_count: hasAttachments ? 1 : 0,
         sync_status: "synced",
+        classification_status: BACKFILL_HOLDING_STATUS,
         last_seen_at: nowIso,
         updated_at: nowIso,
       };
     });
 
     if (!options.dryRun) {
-      const { error: upsertError } = await deps.supabase
-        .from("zoho_email_metadata")
-        .upsert(rows, { onConflict: "mailbox_email,message_id" });
-      if (upsertError) throw new Error(`Failed to upsert email metadata: ${upsertError.message}`);
+      const newRows = rows.filter((row) => !existing.has(row.message_id));
+      if (newRows.length > 0) {
+        const { error: upsertError } = await deps.supabase
+          .from("zoho_email_metadata")
+          .upsert(newRows, { onConflict: "mailbox_email,message_id" });
+        if (upsertError) throw new Error(`Failed to upsert email metadata: ${upsertError.message}`);
+      }
     }
 
     result.fetched += page.length;
