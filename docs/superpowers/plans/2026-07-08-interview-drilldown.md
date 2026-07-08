@@ -1079,7 +1079,7 @@ The existing `buildUrl` helper in this file (line 30-44) is hardcoded to return 
     : "/operations/interviews";
 ```
 
-Then replace the "Interviews" `MetricCard` line (currently line 203):
+Then replace the "Interviews" `MetricCard` line (currently line 203) with exactly this — one `href` prop, nothing else:
 
 ```typescript
           <MetricCard
@@ -1090,6 +1090,8 @@ Then replace the "Interviews" `MetricCard` line (currently line 203):
             href={interviewsHref}
           />
 ```
+
+**This `MetricCard` must have exactly one `href` prop: `href={interviewsHref}`.** Do not also keep or add `href={buildUrl(new URLSearchParams(), { from, to }).replace("/overview", "/operations/interviews")}` — that line must not appear anywhere in the final code. Two `href` attributes on the same JSX element is invalid anyway (the second would silently win); there is exactly one correct line, shown above.
 
 - [ ] **Step 3: Type-check**
 
