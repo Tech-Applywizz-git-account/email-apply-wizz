@@ -117,6 +117,12 @@ export default async function OverviewPage({ searchParams }: { searchParams: Sea
   const latestIngest = formatDateTime(data.metrics.latestSuccessfulIngestAt);
   const hasRows = data.clientRows.length > 0;
   const hasActivity = data.activityRows.length > 0;
+  const interviewsParams = new URLSearchParams();
+  if (from) interviewsParams.set("from", from);
+  if (to) interviewsParams.set("to", to);
+  const interviewsHref = interviewsParams.toString()
+    ? `/operations/interviews?${interviewsParams.toString()}`
+    : "/operations/interviews";
 
   return (
     <main className="coo-page coo-overview-page">
@@ -200,7 +206,13 @@ export default async function OverviewPage({ searchParams }: { searchParams: Sea
           <MetricCard label="Classified" value={data.metrics.classifiedToday} hint="Based on when classification finished" tone="success" />
           <MetricCard label="Review Queue" value={data.metrics.review} hint="Needs human review" tone="review" />
           <MetricCard label="Applications" value={data.metrics.applications} hint="application_received" tone="neutral" />
-          <MetricCard label="Interviews" value={data.metrics.interviews} hint="Highest-signal follow up" tone="interview" />
+          <MetricCard
+            label="Interviews"
+            value={data.metrics.interviews}
+            hint="Highest-signal follow up"
+            tone="interview"
+            href={interviewsHref}
+          />
           <MetricCard label="Assessments" value={data.metrics.assessments} hint="Timed evaluation requests" tone="assessment" />
           <MetricCard label="Offers" value={data.metrics.offers} hint="Highest-priority activity" tone="offer" />
           <MetricCard label="Rejections" value={data.metrics.rejections} hint="Closed opportunities" tone="neutral" />

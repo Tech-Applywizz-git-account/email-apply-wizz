@@ -673,6 +673,8 @@ export async function classifyEmails(
             action_required: classification.action_required,
             deadline: parsedDeadline,
             priority: (classification as { priority?: string }).priority ?? null,
+            company_name: (classification as { company_name?: string | null }).company_name ?? null,
+            job_title: (classification as { job_title?: string | null }).job_title ?? null,
             reason: safeReason,
             classifier_source,
             // routing fields — client_id always null until real clients table exists

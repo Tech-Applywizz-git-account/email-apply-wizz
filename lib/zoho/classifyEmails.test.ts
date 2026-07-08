@@ -340,6 +340,24 @@ describe("Phase 3C pipeline decision logic", () => {
       expect(call).not.toHaveProperty("attachments");
     });
 
+    it("includes company_name and job_title in the write-back payload when present", () => {
+      const payload: Record<string, unknown> = {
+        category: "interview_invite",
+        confidence: 0.93,
+        classifier_source: "ai",
+        classification_status: "classified",
+        company_name: "State Farm",
+        job_title: "Data Analyst",
+      };
+      mockSupabaseUpdate(payload);
+      expect(mockSupabaseUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          company_name: "State Farm",
+          job_title: "Data Analyst",
+        }),
+      );
+    });
+
     it("uses review status when a result still needs human review", () => {
       const payload: Record<string, unknown> = {
         needs_human_review: true,
@@ -665,6 +683,106 @@ describe("Phase 3D dry-run and mailbox guardrails (decision logic)", () => {
       expect(String(persistedReason)).not.toContain("test@example.com");
       expect(String(persistedReason)).not.toContain("482910");
       expect(String(persistedReason).toLowerCase()).not.toContain("access token");
+    });
+
+    it("persists company_name and job_title from AI output on the live path", async () => {
+      process.env.ZOHO_SYNC_MAILBOX = "test@applywizard.ai";
+      process.env.ZOHO_CLIENT_ID = "cid";
+      process.env.ZOHO_CLIENT_SECRET = "secret";
+      process.env.ZOHO_ACCOUNTS_BASE_URL = "https://accounts.zoho.test";
+      process.env.ZOHO_MAIL_BASE_URL = "https://mail.zoho.test";
+      process.env.ZOHO_CLASSIFY_MAX_PER_RUN = "5";
+
+      mockClaimEmailsForClassification.mockResolvedValue([
+        {
+          id: "row-2",
+          message_id: "msg-2",
+          folder_id: "fold-1",
+          sender: "sender@company.test",
+          received_at: "2026-06-30T04:00:00.000Z",
+          attempt_count: 0,
+        },
+      ]);
+      mockUpdateClaimedEmail.mockResolvedValue(true);
+      mockClassifyEmail.mockReturnValue({
+        ...BASE_RESULT,
+        category: "unknown",
+        confidence: 0.2,
+        needs_human_review: true,
+      });
+      mockTryRegexExtract.mockReturnValue(null);
+      mockClassifyWithAI.mockResolvedValue({
+        ...BASE_RESULT,
+        category: "interview_invite",
+        confidence: 0.9,
+        needs_human_review: false,
+        company_name: "State Farm",
+        job_title: "Data Analyst",
+      });
+
+      const fetchMock = vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes("/details")) {
+          return {
+            ok: true,
+            json: async () => ({
+              status: { code: 200, description: "success" },
+              data: {
+                messageId: "msg-2",
+                sender: "sender@company.test",
+                fromAddress: "sender@company.test",
+                subject: "Interview invitation",
+                receivedTime: "1719043200000",
+                toAddress: "tracker@applywizard.ai",
+              },
+            }),
+          };
+        }
+
+        if (url.includes("/content")) {
+          return {
+            ok: true,
+            json: async () => ({
+              status: { code: 200, description: "success" },
+              data: {
+                messageId: "msg-2",
+                content: "<p>Generic safe body</p>",
+              },
+            }),
+          };
+        }
+
+        if (url.includes("/header?raw=true")) {
+          return {
+            ok: true,
+            json: async () => ({
+              status: { code: 200, description: "success" },
+              data: {
+                headerContent: "Delivered-To: tracker@applywizard.ai",
+              },
+            }),
+          };
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+
+      const originalFetch = global.fetch;
+      global.fetch = fetchMock as typeof fetch;
+
+      try {
+        const { classifyEmails } = await import("@/lib/zoho/classifyEmails");
+        await classifyEmails();
+      } finally {
+        global.fetch = originalFetch;
+      }
+
+      const persistenceCall = mockUpdateClaimedEmail.mock.calls.find(
+        ([, args]) => args?.payload?.company_name !== undefined,
+      );
+
+      expect(persistenceCall?.[1]?.payload?.company_name).toBe("State Farm");
+      expect(persistenceCall?.[1]?.payload?.job_title).toBe("Data Analyst");
     });
 
     it("failure path persists only fixed safe messages, never raw exception text", () => {

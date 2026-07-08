@@ -68,7 +68,7 @@ export default function OperationsLayout({
       ? "Overview"
       : pathname === "/clients"
         ? "Clients"
-        : pathname === "/operations"
+        : pathname === "/operations" || pathname.startsWith("/operations/")
           ? "Operations"
           : pathname === "/review-queue"
             ? "Review Queue"
@@ -696,6 +696,20 @@ export default function OperationsLayout({
           background: var(--white);
           box-shadow: var(--card-shadow);
           min-height: 152px;
+        }
+
+        .coo-metric--clickable {
+          color: inherit;
+          text-decoration: none;
+          transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+        }
+
+        .coo-metric--clickable:hover,
+        .coo-metric--clickable:focus-visible {
+          transform: translateY(-1px);
+          box-shadow: 0 18px 32px rgba(11, 29, 51, 0.12);
+          border-color: rgba(44, 118, 255, 0.35);
+          outline: none;
         }
 
         .coo-metric__head {

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 type Tone = "neutral" | "success" | "warning" | "critical" | "review" | "offer" | "interview" | "assessment";
@@ -20,23 +21,35 @@ export function MetricCard({
   hint,
   tone = "neutral",
   icon,
+  href,
 }: {
   label: string;
   value: number | string;
   hint: string;
   tone?: Tone;
   icon?: ReactNode;
+  href?: string;
 }) {
-  return (
-    <article className={`coo-metric coo-metric--${tone}`}>
+  const content = (
+    <>
       <div className="coo-metric__head">
         <span className="coo-metric__label">{label}</span>
         {icon ? <span className="coo-metric__icon">{icon}</span> : null}
       </div>
       <strong className="coo-metric__value">{value}</strong>
       <p className="coo-metric__hint">{hint}</p>
-    </article>
+    </>
   );
+
+  if (href) {
+    return (
+      <Link href={href} className={`coo-metric coo-metric--${tone} coo-metric--clickable`}>
+        {content}
+      </Link>
+    );
+  }
+
+  return <article className={`coo-metric coo-metric--${tone}`}>{content}</article>;
 }
 
 export function SectionBlock({
@@ -81,4 +94,3 @@ export function EmptyState({
     </div>
   );
 }
-

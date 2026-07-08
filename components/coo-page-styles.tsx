@@ -112,6 +112,30 @@ export function CooPageStyles() {
         box-shadow: var(--card-shadow);
       }
 
+      .coo-detail-list {
+        display: grid;
+        grid-template-columns: minmax(140px, 220px) minmax(0, 1fr);
+        gap: 12px 18px;
+        padding: 18px;
+        border: 1px solid var(--border-gray);
+        border-radius: 18px;
+        background: var(--white);
+        box-shadow: var(--card-shadow);
+      }
+
+      .coo-detail-list dt {
+        color: var(--text-muted);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .coo-detail-list dd {
+        margin: 0;
+        color: var(--text-dark);
+        word-break: break-word;
+      }
+
       .coo-table {
         width: 100%;
         border-collapse: collapse;
@@ -417,6 +441,25 @@ export function CooPageStyles() {
         font-size: 0.9rem;
       }
 
+      .coo-pagination {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-top: 1px solid var(--border-gray);
+        color: var(--text-muted);
+        font-size: 0.9rem;
+      }
+
+      .coo-interviews-page,
+      .coo-interview-detail-page {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+
       .coo-metric-grid--operations,
       .coo-metric-grid--review,
       .coo-metric-grid--clients,
@@ -487,6 +530,10 @@ export function CooPageStyles() {
 
         .coo-table-card {
           display: none;
+        }
+
+        .coo-detail-list {
+          grid-template-columns: 1fr;
         }
 
         .coo-mobile-grid {
