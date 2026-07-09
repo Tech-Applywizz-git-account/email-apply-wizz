@@ -437,3 +437,49 @@ describe("cooWorkspace", () => {
     expect(styles).toContain(".coo-flow");
   });
 });
+
+describe("effectiveCategory / human correction in dashboard counts", () => {
+  it("counts a row under its human-corrected category, not the AI's original category", async () => {
+    const emailRows = [
+      {
+        id: "row-1",
+        original_recipient: "client@applywizard.ai",
+        category: "interview_invite",
+        human_category: "recruiter_reply",
+        classification_status: "classified",
+        confidence: 0.9,
+        priority: "high",
+        received_at: "2026-07-08T00:00:00.000Z",
+        first_seen_at: "2026-07-08T00:00:00.000Z",
+        created_at: "2026-07-08T00:00:00.000Z",
+        classified_at: "2026-07-08T00:00:00.000Z",
+        deadline: null,
+        action_required: null,
+        reason: null,
+        next_retry_at: null,
+        dead_lettered_at: null,
+        claim_expires_at: null,
+        last_error_code: null,
+        routing_status: "routed",
+        email_direction: "inbound",
+      },
+    ];
+
+    const supabase = createSupabaseMock(emailRows, [
+      { mailbox_email: "tracker@applywizard.ai", last_successful_sync_at: "2026-07-08T00:00:00.000Z" },
+    ]);
+    const { getOverviewWorkspaceData } = await import("./cooWorkspace");
+
+    // getOverviewWorkspaceData takes the mock Supabase client as a direct
+    // function argument (dependency injection), not via vi.mock — this is
+    // the same convention every other test in this file already uses.
+    const data = await getOverviewWorkspaceData({
+      supabase: supabase as never,
+      now: new Date("2026-07-08T12:00:00.000Z"),
+      mailboxEmail: "tracker@applywizard.ai",
+    });
+
+    expect(data.metrics.interviews).toBe(0);
+    expect(data.metrics.recruiterReplies).toBe(1);
+  });
+});

@@ -10,6 +10,7 @@ const SAFE_EMAIL_COLUMNS = [
   "id",
   "original_recipient",
   "category",
+  "human_category",
   "classification_status",
   "confidence",
   "priority",
@@ -94,6 +95,7 @@ export interface EmailRow {
   id: string;
   original_recipient: string | null;
   category: EmailCategory | string | null;
+  human_category: string | null;
   classification_status: QueueStatus | string | null;
   confidence: number | null;
   priority: Priority | string | null;
@@ -373,6 +375,10 @@ function isImportantCategory(category: string | null | undefined): category is (
   return Boolean(category && IMPORTANT_CATEGORIES.includes(category as (typeof IMPORTANT_CATEGORIES)[number]));
 }
 
+function effectiveCategory(row: Pick<EmailRow, "category" | "human_category">): string | null {
+  return row.human_category ?? row.category;
+}
+
 function resolveDateRange(args?: {
   now?: Date;
   range?: string | null;
@@ -506,10 +512,10 @@ function isQueueStatus(status: string | null | undefined): status is QueueStatus
 }
 
 function priorityFromRow(row: EmailRow): WorkspaceClientRow["urgency"] {
-  if (row.category === "job_offer") return "offer";
-  if (row.category === "interview_invite") return "interview";
-  if (row.category === "assessment") return "assessment";
-  if (row.category === "recruiter_reply" || row.category === "follow_up_needed") return "review required";
+  if (effectiveCategory(row) === "job_offer") return "offer";
+  if (effectiveCategory(row) === "interview_invite") return "interview";
+  if (effectiveCategory(row) === "assessment") return "assessment";
+  if (effectiveCategory(row) === "recruiter_reply" || effectiveCategory(row) === "follow_up_needed") return "review required";
   if (row.classification_status === "review") return "review required";
   return "other";
 }
@@ -579,13 +585,13 @@ function toClientRowAggregate(
 
     const isDeadLetter = row.classification_status === "dead_letter";
 
-    if (!isDeadLetter && row.category === "application_received") applications += 1;
-    if (!isDeadLetter && row.category === "interview_invite") interviews += 1;
-    if (!isDeadLetter && row.category === "assessment") assessments += 1;
-    if (!isDeadLetter && row.category === "job_offer") offers += 1;
-    if (!isDeadLetter && row.category === "rejection") rejections += 1;
-    if (!isDeadLetter && row.category === "recruiter_reply") recruiterReplies += 1;
-    if (!isDeadLetter && row.category === "follow_up_needed") followUpNeeded += 1;
+    if (!isDeadLetter && effectiveCategory(row) === "application_received") applications += 1;
+    if (!isDeadLetter && effectiveCategory(row) === "interview_invite") interviews += 1;
+    if (!isDeadLetter && effectiveCategory(row) === "assessment") assessments += 1;
+    if (!isDeadLetter && effectiveCategory(row) === "job_offer") offers += 1;
+    if (!isDeadLetter && effectiveCategory(row) === "rejection") rejections += 1;
+    if (!isDeadLetter && effectiveCategory(row) === "recruiter_reply") recruiterReplies += 1;
+    if (!isDeadLetter && effectiveCategory(row) === "follow_up_needed") followUpNeeded += 1;
 
     if (row.classification_status === "review") reviewCount += 1;
     if (row.classification_status === "pending") pendingCount += 1;
@@ -596,7 +602,7 @@ function toClientRowAggregate(
     if (
       row.classification_status &&
       ["classified", "review"].includes(row.classification_status) &&
-      (isBusinessCategory(row.category) || row.classification_status === "review")
+      (isBusinessCategory(effectiveCategory(row)) || row.classification_status === "review")
     ) {
       if (!latestMeaningfulRow) {
         latestMeaningfulRow = row;
@@ -711,9 +717,10 @@ function mapTimelineRow(row: EmailRow, now: Date): WorkspaceTimelineRow {
   const queueAge = minutesBetween(now, queueAgeTimestamp(row));
   const isReview = row.classification_status === "review";
   const isPending = row.classification_status === "pending" || row.classification_status === "processing" || row.classification_status === "retry_scheduled";
+  const category = effectiveCategory(row);
   return {
     id: row.id,
-    category: row.category && isBusinessCategory(row.category) ? row.category : "unknown",
+    category: category && isBusinessCategory(category) ? category : "unknown",
     classificationStatus: (row.classification_status as QueueStatus | null) ?? null,
     priority: (row.priority as Priority | null) ?? null,
     confidence: row.confidence ?? null,
@@ -753,7 +760,7 @@ function mapReviewRow(row: EmailRow, now: Date): ReviewQueueRow {
     id: row.id,
     clientKey: buildClientKey(row.original_recipient ?? ""),
     originalRecipient: row.original_recipient,
-    suggestedCategory: row.category && row.category !== "unknown" ? (row.category as EmailCategory) : "unknown",
+    suggestedCategory: effectiveCategory(row) && effectiveCategory(row) !== "unknown" ? (effectiveCategory(row) as EmailCategory) : "unknown",
     confidence: row.confidence ?? null,
     safeReason: sanitizeReason(row.reason ?? SAFE_REASON_FALLBACK),
     receivedAt: row.received_at ?? row.created_at ?? now.toISOString(),
@@ -878,7 +885,7 @@ function buildImportantActivity(rows: EmailRow[], now: Date): WorkspaceActivityR
   const filtered = rows.filter(
     (row) =>
       row.classification_status !== "dead_letter" &&
-      (isImportantCategory(row.category) || row.classification_status === "review"),
+      (isImportantCategory(effectiveCategory(row)) || row.classification_status === "review"),
   );
   const mapped = filtered
     .map((row) => {
@@ -887,7 +894,7 @@ function buildImportantActivity(rows: EmailRow[], now: Date): WorkspaceActivityR
         id: row.id,
         clientKey: buildClientKey(row.original_recipient ?? ""),
         originalRecipient: row.original_recipient,
-        category: row.category && isBusinessCategory(row.category) ? row.category : null,
+        category: effectiveCategory(row) && isBusinessCategory(effectiveCategory(row)) ? effectiveCategory(row) : null,
         classificationStatus: (row.classification_status as QueueStatus | null) ?? null,
         priority: row.classification_status === "review" ? "review" : priorityFromRow(row),
         confidence: row.confidence ?? null,
@@ -989,13 +996,13 @@ export async function getOverviewWorkspaceData(args?: {
     retryScheduled: queueRetryRows.length,
     review: queueReviewRows.length,
     deadLetter: queueDeadRows.length,
-    applications: overviewRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "application_received").length,
-    interviews: overviewRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "interview_invite").length,
-    assessments: overviewRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "assessment").length,
-    offers: overviewRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "job_offer").length,
-    rejections: overviewRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "rejection").length,
-    recruiterReplies: overviewRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "recruiter_reply").length,
-    followUpNeeded: overviewRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "follow_up_needed").length,
+    applications: overviewRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "application_received").length,
+    interviews: overviewRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "interview_invite").length,
+    assessments: overviewRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "assessment").length,
+    offers: overviewRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "job_offer").length,
+    rejections: overviewRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "rejection").length,
+    recruiterReplies: overviewRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "recruiter_reply").length,
+    followUpNeeded: overviewRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "follow_up_needed").length,
     oldestBacklogAgeMinutes: (() => {
       const backlogRows = [...queuePendingRows, ...queueProcessingRows, ...queueRetryRows];
       const oldest = backlogRows.reduce<string | null>((currentOldest, row) => {
@@ -1343,14 +1350,14 @@ export async function getOverviewDashboardData(args?: {
     countRows(supabase, (query) => query.eq("classification_status", "dead_letter")),
   ]);
 
-  const applicationReceivedToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "application_received").length;
+  const applicationReceivedToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "application_received").length;
   const classifiedToday = todayRows.filter((row) => row.classified_at && row.classified_at >= startIso && row.classified_at < endIso).length;
-  const interviewInviteToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "interview_invite").length;
-  const assessmentToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "assessment").length;
-  const jobOfferToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "job_offer").length;
-  const rejectionToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "rejection").length;
-  const recruiterReplyToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "recruiter_reply").length;
-  const followUpNeededToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && row.category === "follow_up_needed").length;
+  const interviewInviteToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "interview_invite").length;
+  const assessmentToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "assessment").length;
+  const jobOfferToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "job_offer").length;
+  const rejectionToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "rejection").length;
+  const recruiterReplyToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "recruiter_reply").length;
+  const followUpNeededToday = todayRows.filter((row) => row.classification_status !== "dead_letter" && effectiveCategory(row) === "follow_up_needed").length;
 
   const backlogRows = await fetchRows(
     supabase,
@@ -1368,23 +1375,23 @@ export async function getOverviewDashboardData(args?: {
   const importantRows = todayRows.filter(
     (row) =>
       row.classification_status !== "dead_letter" &&
-      (isImportantCategory(row.category) || row.classification_status === "review"),
+      (isImportantCategory(effectiveCategory(row)) || row.classification_status === "review"),
   );
   const activityRankById = new Map(
-    importantRows.map((row) => [row.id, row.classification_status === "review" ? 5 : IMPORTANT_CATEGORIES.indexOf(row.category as (typeof IMPORTANT_CATEGORIES)[number]) + 1] as const),
+    importantRows.map((row) => [row.id, row.classification_status === "review" ? 5 : IMPORTANT_CATEGORIES.indexOf(effectiveCategory(row) as (typeof IMPORTANT_CATEGORIES)[number]) + 1] as const),
   );
 
   const importantActivity = importantRows
     .map((row) => ({
       id: row.id,
       originalRecipient: row.original_recipient ?? null,
-      category: row.category && isBusinessCategory(row.category) ? row.category : null,
+      category: effectiveCategory(row) && isBusinessCategory(effectiveCategory(row)) ? effectiveCategory(row) : null,
       classificationStatus: row.classification_status ?? "classified",
       priority: row.classification_status === "review"
         ? "review"
-        : row.category === "job_offer"
+        : effectiveCategory(row) === "job_offer"
           ? "critical"
-          : row.category === "interview_invite" || row.category === "assessment"
+          : effectiveCategory(row) === "interview_invite" || effectiveCategory(row) === "assessment"
             ? "high"
             : "normal",
       confidence: row.confidence ?? null,
