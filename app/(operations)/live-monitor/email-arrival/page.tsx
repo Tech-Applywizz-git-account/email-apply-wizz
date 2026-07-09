@@ -10,6 +10,7 @@ export default async function EmailArrivalMonitorPage() {
 
   return (
     <main className="coo-page coo-live-monitor-page">
+      <meta httpEquiv="refresh" content="20" />
       <header className="coo-page__header">
         <div>
           <span className="coo-page__eyebrow">Live Monitor</span>
