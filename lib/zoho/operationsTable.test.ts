@@ -26,7 +26,7 @@ function applyFilters(rows: MockRow[], filters: Array<{ type: string; column: st
 }
 
 function createSupabaseMock(rows: MockRow[]) {
-  const makeQuery = () => {
+  const makeQuery = (columns?: string) => {
     const state = {
       filters: [] as Array<{ type: string; column: string; value: unknown }>,
       range: null as null | { start: number; end: number },
@@ -64,12 +64,20 @@ function createSupabaseMock(rows: MockRow[]) {
       },
       then(resolve: (value: { data: MockRow[] | MockRow | null; error: null; count?: number }) => void) {
         const filtered = applyFilters(rows, state.filters);
+        const selectedColumns = columns
+          ?.split(",")
+          .map((column) => column.trim())
+          .filter(Boolean);
+        const project = (row: MockRow) =>
+          selectedColumns
+            ? Object.fromEntries(selectedColumns.map((column) => [column, row[column]]))
+            : row;
         if (state.single) {
-          resolve({ data: filtered[0] ?? null, error: null });
+          resolve({ data: filtered[0] ? project(filtered[0]) : null, error: null });
           return;
         }
         const ranged = state.range ? filtered.slice(state.range.start, state.range.end + 1) : filtered;
-        resolve({ data: ranged, error: null, count: filtered.length });
+        resolve({ data: ranged.map(project), error: null, count: filtered.length });
       },
     };
 
@@ -78,7 +86,7 @@ function createSupabaseMock(rows: MockRow[]) {
 
   return {
     from: () => ({
-      select: () => makeQuery(),
+      select: (columns?: string) => makeQuery(columns),
     }),
   };
 }
@@ -222,5 +230,20 @@ describe("getInterviewById", () => {
     const result = await getInterviewById("missing-id");
 
     expect(result.ok).toBe(false);
+  });
+
+  it("selects human review fields alongside the existing metadata fields", async () => {
+    mockSupabase = createSupabaseMock([
+      INTERVIEW_ROW({ id: "row-1", human_category: "recruiter_reply", reviewed_by: "admin", reviewed_at: "2026-07-08T00:00:00.000Z" }),
+    ]);
+
+    const { getInterviewById } = await import("./operationsTable");
+    const result = await getInterviewById("row-1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.row.human_category).toBe("recruiter_reply");
+      expect(result.row.reviewed_by).toBe("admin");
+    }
   });
 });

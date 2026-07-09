@@ -17,6 +17,10 @@ const INTERVIEW_COLUMNS = [
   "company_name",
   "job_title",
   "classification_status",
+  "human_category",
+  "reviewed_by",
+  "reviewed_at",
+  "correction_reason",
 ].join(",");
 
 export interface InterviewRow {
@@ -32,6 +36,10 @@ export interface InterviewRow {
   company_name: string | null;
   job_title: string | null;
   classification_status: string | null;
+  human_category: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  correction_reason: string | null;
 }
 
 export interface InterviewFilters {
