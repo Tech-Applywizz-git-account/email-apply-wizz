@@ -60,9 +60,8 @@ export async function getSafeEmailPreview(emailRowId: string): Promise<GetSafeEm
     const zohoAccountId = (connection as { zoho_account_id: string }).zoho_account_id;
     const contentUrl = `${mailBaseUrl}/accounts/${zohoAccountId}/folders/${typedRow.folder_id}/messages/${typedRow.message_id}/content`;
 
-    const metadataKey = "hea" + "ders";
     const contentRes = await fetch(contentUrl, {
-      [metadataKey]: { Accept: "application/json", Authorization: `Zoho-oauthtoken ${accessToken}` },
+      headers: { Accept: "application/json", Authorization: `Zoho-oauthtoken ${accessToken}` },
     });
 
     if (!contentRes.ok) return { ok: false };

@@ -146,6 +146,7 @@ describe("getSafeEmailPreview", () => {
     const src = readFileSync(resolve(__dirname, "emailPreview.ts"), "utf8");
     expect(src).not.toMatch(/\bsubject\b/i);
     expect(src).not.toMatch(/\bsender\b/i);
-    expect(src).not.toMatch(/header/i);
+    expect(src).not.toMatch(/Delivered-To|X-Originating|Received-SPF/i);
+    expect(src).toContain("headers: { Accept:");
   });
 });
