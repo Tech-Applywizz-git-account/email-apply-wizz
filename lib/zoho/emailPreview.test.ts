@@ -6,10 +6,16 @@ vi.mock("server-only", () => ({}));
 
 const mockRefreshZohoToken = vi.fn();
 
-vi.mock("@/lib/zoho/zohoApiHelpers", () => ({
-  refreshZohoToken: mockRefreshZohoToken,
-  stripHtml: (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-}));
+vi.mock("@/lib/zoho/zohoApiHelpers", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/zoho/zohoApiHelpers")>(
+    "@/lib/zoho/zohoApiHelpers",
+  );
+
+  return {
+    ...actual,
+    refreshZohoToken: mockRefreshZohoToken,
+  };
+});
 
 function makeSupabase(row: Record<string, unknown> | null) {
   return {
@@ -104,6 +110,30 @@ describe("getSafeEmailPreview", () => {
       }
     } finally {
       global.fetch = originalFetch;
+    }
+  });
+
+  it("decodes common HTML entities before returning preview text", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: { code: 200 },
+        data: { content: "<p>Stephen&nbsp;&amp;&nbsp;Co &lt;Hiring&gt; &quot;Hello&quot; &#39;World&#39;</p>" },
+      }),
+    }) as typeof fetch;
+
+    const { getSafeEmailPreview } = await import("./emailPreview");
+    const result = await getSafeEmailPreview("row-1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.preview).toContain("Stephen & Co \"Hello\" 'World'");
+      expect(result.preview).not.toContain("&nbsp;");
+      expect(result.preview).not.toContain("&amp;");
+      expect(result.preview).not.toContain("&lt;");
+      expect(result.preview).not.toContain("&gt;");
+      expect(result.preview).not.toContain("&quot;");
+      expect(result.preview).not.toContain("&#39;");
     }
   });
 
