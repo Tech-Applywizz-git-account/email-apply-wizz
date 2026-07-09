@@ -9,6 +9,7 @@ import {
   IconClients,
   IconMailboxes,
   IconReviewQueue,
+  IconMail,
   IconMenu,
   IconClose,
 } from "@/components/icons";
@@ -66,9 +67,11 @@ export default function OperationsLayout({
   const activeLabel =
     pathname === "/overview"
       ? "Overview"
+      : pathname === "/live-monitor" || pathname.startsWith("/live-monitor/")
+        ? "Live Monitor"
       : pathname === "/clients"
         ? "Clients"
-        : pathname === "/operations" || pathname.startsWith("/operations/")
+      : pathname === "/operations" || pathname.startsWith("/operations/")
           ? "Operations"
           : pathname === "/review-queue"
             ? "Review Queue"
@@ -92,6 +95,11 @@ export default function OperationsLayout({
             href="/overview"
             icon={<IconOverview size={20} />}
             label="Overview"
+          />
+          <NavLink
+            href="/live-monitor/email-arrival"
+            icon={<IconMail size={20} />}
+            label="Live Monitor"
           />
           <NavLink
             href="/clients"
@@ -167,6 +175,12 @@ export default function OperationsLayout({
                 href="/overview"
                 icon={<IconOverview size={20} />}
                 label="Overview"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+              <NavLink
+                href="/live-monitor/email-arrival"
+                icon={<IconMail size={20} />}
+                label="Live Monitor"
                 onClick={() => setMobileMenuOpen(false)}
               />
               <NavLink

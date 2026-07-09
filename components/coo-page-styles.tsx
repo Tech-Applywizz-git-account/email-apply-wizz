@@ -27,6 +27,12 @@ export function CooPageStyles() {
         gap: 24px;
       }
 
+      .coo-live-monitor-page {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+
       .coo-review-page {
         display: flex;
         flex-direction: column;
@@ -472,6 +478,12 @@ export function CooPageStyles() {
         grid-template-columns: repeat(4, minmax(0, 1fr));
       }
 
+      .coo-metric-grid--live-monitor {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
       .coo-metric-grid--review {
         grid-template-columns: repeat(4, minmax(0, 1fr));
       }
@@ -491,6 +503,7 @@ export function CooPageStyles() {
         }
 
         .coo-metric-grid--operations,
+        .coo-metric-grid--live-monitor,
         .coo-metric-grid--review,
         .coo-metric-grid--clients {
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -522,6 +535,7 @@ export function CooPageStyles() {
         .coo-chip-grid,
         .coo-metric-grid--client-detail,
         .coo-metric-grid--operations,
+        .coo-metric-grid--live-monitor,
         .coo-metric-grid--review,
         .coo-metric-grid--clients,
         .coo-operations-grid {

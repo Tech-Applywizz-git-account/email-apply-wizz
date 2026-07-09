@@ -4,6 +4,7 @@ import type { NextRequest } from "next/server";
 const PROTECTED_PATHS = [
   "/dashboard",
   "/overview",
+  "/live-monitor",
   "/clients",
   "/operations",
   "/review-queue",
@@ -77,6 +78,8 @@ export const config = {
   matcher: [
     "/dashboard/:path*",
     "/overview",
+    "/live-monitor",
+    "/live-monitor/:path*",
     "/clients/:path*",
     "/operations/:path*",
     "/review-queue",

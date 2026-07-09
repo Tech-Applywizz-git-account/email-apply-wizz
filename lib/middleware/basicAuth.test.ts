@@ -24,7 +24,7 @@ describe("middleware Basic Auth", () => {
   it("challenges protected COO routes without credentials", () => {
     process.env.DASHBOARD_SECRET = "test-dashboard-secret";
 
-    for (const pathname of ["/dashboard", "/overview", "/clients", "/clients/example", "/operations", "/review-queue"]) {
+    for (const pathname of ["/dashboard", "/overview", "/clients", "/clients/example", "/operations", "/review-queue", "/live-monitor", "/live-monitor/email-arrival"]) {
       const response = middleware(request(pathname));
       expect(response.status).toBe(401);
       expect(response.headers.get("WWW-Authenticate")).toBe('Basic realm="ApplyWizard Dashboard"');
@@ -35,6 +35,15 @@ describe("middleware Basic Auth", () => {
     process.env.DASHBOARD_SECRET = "test-dashboard-secret";
 
     const response = middleware(request("/clients/example", basicAuth("admin", "test-dashboard-secret")));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("allows protected live monitor routes with valid credentials", () => {
+    process.env.DASHBOARD_SECRET = "test-dashboard-secret";
+
+    const response = middleware(request("/live-monitor/email-arrival", basicAuth("admin", "test-dashboard-secret")));
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-middleware-next")).toBe("1");
