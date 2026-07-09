@@ -53,13 +53,13 @@ describe("submitReviewDecision", () => {
     const result = await submitReviewDecision({
       id: "row-1",
       decision: "change_category",
-      newCategory: "recruiter_reply",
+      newCategory: "spam_or_irrelevant",
       reviewedBy: "admin",
     });
 
     expect(result).toEqual({ ok: true });
     expect(mockSupabase.update).toHaveBeenCalledWith(
-      expect.objectContaining({ human_category: "recruiter_reply", classification_status: "classified" }),
+      expect.objectContaining({ human_category: "spam_or_irrelevant", classification_status: "classified" }),
     );
   });
 

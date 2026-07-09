@@ -1,12 +1,15 @@
 import { revalidatePath } from "next/cache";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { getInterviewById } from "@/lib/zoho/operationsTable";
 import { getSafeEmailPreview } from "@/lib/zoho/emailPreview";
+import { getReviewSubmissionBanner } from "@/lib/zoho/reviewActionFeedback";
 import { submitReviewDecision, type ReviewDecision } from "@/lib/zoho/reviewCorrection";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 function formatDate(value: string | null): string {
   if (!value) return "Not available yet";
@@ -26,7 +29,11 @@ async function reviewAction(id: string, formData: FormData) {
   const newCategory = formData.get("category")?.toString();
   const correctionReason = formData.get("correction_reason")?.toString();
 
-  await submitReviewDecision({
+  if (decision === "change_category" && !newCategory) {
+    redirect(`/operations/interviews/${id}?review=missing_category`);
+  }
+
+  const result = await submitReviewDecision({
     id,
     decision,
     newCategory: newCategory || undefined,
@@ -34,11 +41,30 @@ async function reviewAction(id: string, formData: FormData) {
     reviewedBy: "admin",
   });
 
+  if (!result.ok) {
+    const review =
+      result.code === "INVALID_CATEGORY"
+        ? "invalid_category"
+        : result.code === "ROW_NOT_FOUND"
+          ? "row_not_found"
+          : "save_failed";
+
+    redirect(`/operations/interviews/${id}?review=${review}`);
+  }
+
   revalidatePath(`/operations/interviews/${id}`);
+  redirect(`/operations/interviews/${id}?review=saved`);
 }
 
-export default async function InterviewDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function InterviewDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: SearchParams;
+}) {
   const { id } = await params;
+  const paramsResult = await searchParams;
   const result = await getInterviewById(id);
 
   if (!result.ok) {
@@ -47,6 +73,8 @@ export default async function InterviewDetailPage({ params }: { params: Promise<
 
   const row = result.row;
   const previewResult = await getSafeEmailPreview(id);
+  const reviewStatus = Array.isArray(paramsResult.review) ? paramsResult.review[0] : paramsResult.review;
+  const reviewBanner = getReviewSubmissionBanner(reviewStatus);
 
   return (
     <main className="coo-page coo-interview-detail-page">
@@ -105,6 +133,16 @@ export default async function InterviewDetailPage({ params }: { params: Promise<
           {previewResult.ok ? previewResult.preview : "Preview unavailable."}
         </p>
       </section>
+
+      {reviewBanner ? (
+        <p
+          className="coo-page__subtitle"
+          role="status"
+          style={{ color: reviewBanner.tone === "success" ? "#14532d" : "#991b1b" }}
+        >
+          {reviewBanner.message}
+        </p>
+      ) : null}
 
       <section className="coo-review-actions">
         <form action={reviewAction.bind(null, id)}>
