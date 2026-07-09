@@ -235,20 +235,29 @@ Document these later with placeholders only:
 - `DASHBOARD_BOOTSTRAP_ADMIN_EMAIL`
 - `DASHBOARD_SESSION_SECRET`
 - `DASHBOARD_TOTP_ENCRYPTION_KEY`
-- `DASHBOARD_OTP_EMAIL_FROM`
-- Microsoft/Outlook email sending credentials if needed
+- `MICROSOFT_TENANT_ID`
+- `MICROSOFT_CLIENT_ID`
+- `MICROSOFT_CLIENT_SECRET`
+- `MICROSOFT_OTP_FROM_EMAIL`
 
 Do not include real values in code, specs, tests, logs, commits, or deployment output.
 
 OTP email provider decision:
 
-- Use Microsoft 365 / Outlook for staff dashboard OTP email.
+- Use Microsoft Graph API for staff dashboard OTP email.
+- Use only the `MICROSOFT_*` environment variable names listed above.
+- Do not use `MS_GRAPH_*` names.
+- These values are configured as Sensitive env vars in Vercel for Production and Preview.
+- Do not expose these env vars to frontend code.
 - Do not use Zoho client mailboxes for dashboard authentication.
+- Do not print Microsoft access tokens.
+- Do not print raw Microsoft Graph errors.
 - Do not implement the provider in this spec step.
+- No redeploy was needed when these env vars were added because auth code is not implemented yet.
 
 ## K. Open questions remaining
 
-1. Which exact Microsoft 365 / Outlook sending mechanism should be used for OTP email: Graph API, SMTP, or another approved internal mail path?
+1. Which Microsoft Graph permissions and tenant admin consent process should be used for OTP email sending?
 2. What is the final session inactivity policy after the initial 12-hour expiry ships?
 3. Who can create or disable Manager Ops and CA users before a full admin user-management screen exists?
 4. Should `@applywizard.ai` be allowed broadly, or only through explicit `dashboard_users` rows?
@@ -260,7 +269,7 @@ Do not execute this plan yet.
 
 1. Add auth database migration for users, OTPs, sessions, audit events, and minimal constraints.
 2. Add server-only auth helpers for allowlist lookup, OTP hashing/verification, TOTP secret encryption, TOTP verification, session creation, session lookup, and logout.
-3. Add OTP email adapter interface with a Microsoft/Outlook implementation behind env config.
+3. Add OTP email adapter interface with a Microsoft Graph implementation behind the documented `MICROSOFT_*` env vars.
 4. Add login, OTP verification, TOTP enrollment, TOTP login, logout, and access-denied screens.
 5. Replace Basic Auth middleware protection with session-based protection after staged smoke testing.
 6. Make existing broad dashboard routes Admin / CEO only.
