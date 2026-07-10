@@ -10,6 +10,14 @@ export function getDashboardAuthSecret(): string {
   return secret || "dashboard-auth-test-secret";
 }
 
+export function getDashboardTotpEncryptionKey(): string {
+  const secret = process.env.DASHBOARD_TOTP_ENCRYPTION_KEY;
+  if (!secret && process.env.NODE_ENV !== "test") {
+    throw new Error("Dashboard TOTP encryption key is not configured.");
+  }
+  return secret || "dashboard-totp-test-secret";
+}
+
 export function hmacHex(value: string): string {
   return createHmac("sha256", getDashboardAuthSecret()).update(value).digest("hex");
 }
