@@ -1,11 +1,14 @@
 import { IconClients, IconMail, IconRefresh, IconWarning } from "@/components/icons";
 import { EmptyState, MetricCard, SectionBlock } from "@/components/coo";
+import { requireDashboardSession } from "@/lib/dashboardAuth/requireDashboardSession";
 import { getEmailArrivalMonitorData, formatIstTime } from "@/lib/zoho/emailArrival";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function EmailArrivalMonitorPage() {
+  await requireDashboardSession();
+
   const result = await getEmailArrivalMonitorData();
 
   return (

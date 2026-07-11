@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { CooBadge, EmptyState, MetricCard, SectionBlock } from "@/components/coo";
+import { requireDashboardSession } from "@/lib/dashboardAuth/requireDashboardSession";
 import { getOperationsWorkspaceData } from "@/lib/zoho/cooWorkspace";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,8 @@ function formatDateTime(value: string | null): string {
 }
 
 export default async function OperationsPage() {
+  await requireDashboardSession();
+
   const data = await getOperationsWorkspaceData();
 
   return (

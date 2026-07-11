@@ -1,6 +1,22 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/dashboardAuth/requireDashboardSession", () => ({
+  requireDashboardSession: vi.fn().mockResolvedValue({
+    id: "session-1",
+    userId: "user-1",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    revokedAt: null,
+    user: {
+      id: "user-1",
+      email: "admin@applywizz.ai",
+      role: "admin_ceo",
+      status: "active",
+      totpEnabled: true,
+    },
+  }),
+}));
 vi.mock("@/lib/zoho/emailArrival", () => ({
   formatIstTime: (value: string | null) => value ?? "Not available yet",
   getEmailArrivalMonitorData: vi.fn().mockResolvedValue({

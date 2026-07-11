@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -13,6 +13,10 @@ function jsonResponse(body: unknown, status = 200) {
     contentType: "application/json",
     body: JSON.stringify(body),
   };
+}
+
+function basicAuth(username: string, password: string): string {
+  return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 }
 
 function loadDashboardSecret(): string {
@@ -88,11 +92,32 @@ async function installAuthMocks(
 }
 
 test.describe("Dashboard auth frontend", () => {
-  test("preserves the Email Tracker Dashboard at /dashboard", async ({ page }) => {
+  test("requires a dashboard session underneath Basic Auth for /dashboard", async ({ page }) => {
     await page.goto("/dashboard");
 
-    await expect(page.getByRole("heading", { name: "Email Tracker Dashboard" })).toBeVisible();
-    await expect(page.getByTestId("dashboard-auth-shell")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/dashboard\/login$/);
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  });
+
+  test("does not let a dashboard session cookie bypass Phase A Basic Auth", async ({ browser }: { browser: Browser }) => {
+    const context = await browser.newContext({
+      extraHTTPHeaders: {
+        authorization: basicAuth("admin", "wrong-dashboard-secret"),
+      },
+    });
+    await context.addCookies([
+      {
+        name: "dashboard_session",
+        value: "fake-session-token",
+        url: "http://localhost:3000",
+      },
+    ]);
+    const page = await context.newPage();
+
+    const response = await page.goto("/overview");
+
+    expect(response?.status()).toBe(401);
+    await context.close();
   });
 
   test("renders the login screen at /dashboard/login when no session cookie exists", async ({ page }) => {

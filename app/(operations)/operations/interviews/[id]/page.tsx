@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 
+import { requireDashboardSession } from "@/lib/dashboardAuth/requireDashboardSession";
 import { getInterviewById } from "@/lib/zoho/operationsTable";
 import { getSafeEmailPreview } from "@/lib/zoho/emailPreview";
 import { getReviewSubmissionBanner } from "@/lib/zoho/reviewActionFeedback";
@@ -63,6 +64,8 @@ export default async function InterviewDetailPage({
   params: Promise<{ id: string }>;
   searchParams: SearchParams;
 }) {
+  await requireDashboardSession();
+
   const { id } = await params;
   const paramsResult = await searchParams;
   const result = await getInterviewById(id);

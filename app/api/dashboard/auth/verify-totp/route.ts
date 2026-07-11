@@ -1,12 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { verifyDashboardLoginTotp } from "@/lib/dashboardAuth/authFlow";
+import { setDashboardSessionCookie } from "@/lib/dashboardAuth/sessionCookie";
 import { requireDashboardBasicAuth } from "../_lib/basicAuthGate";
 import { extractRequestContext } from "../_lib/requestContext";
 
 const MAX_BODY_BYTES = 8192;
 const MAX_CHALLENGE_LENGTH = 2048;
 const MAX_CODE_LENGTH = 10;
-const DASHBOARD_SESSION_COOKIE = "dashboard_session";
 
 function invalidResponse(status = 400): NextResponse {
   return NextResponse.json({ ok: false }, { status });
@@ -25,16 +25,6 @@ function readStringField(body: Record<string, unknown>, key: "challenge" | "code
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > maxLength) return null;
   return trimmed;
-}
-
-function setSessionCookie(response: NextResponse, sessionToken: string): void {
-  response.cookies.set(DASHBOARD_SESSION_COOKIE, sessionToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 12,
-  });
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -72,7 +62,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const response = NextResponse.json({ ok: true }, { status: 200 });
-    setSessionCookie(response, result.sessionToken);
+    setDashboardSessionCookie(response, result.sessionToken);
     return response;
   } catch {
     return invalidResponse();

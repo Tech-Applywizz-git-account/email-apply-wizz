@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Noto_Sans, Inter, Space_Grotesk } from "next/font/google";
@@ -63,6 +63,7 @@ export default function OperationsLayout({
   children: React.ReactNode;
 }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const logoutBusyRef = useRef(false);
   const pathname = usePathname();
   const activeLabel =
     pathname === "/overview"
@@ -76,6 +77,22 @@ export default function OperationsLayout({
           : pathname === "/review-queue"
             ? "Review Queue"
             : "COO";
+
+  async function handleLogout() {
+    if (logoutBusyRef.current) return;
+    logoutBusyRef.current = true;
+
+    try {
+      await fetch("/api/dashboard/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+    } catch {
+      // Logout navigation must proceed even if the idempotent endpoint is unavailable.
+    } finally {
+      window.location.assign("/dashboard/login");
+    }
+  }
 
   return (
     <div
@@ -122,6 +139,14 @@ export default function OperationsLayout({
               <div className="user-role">Super Admin</div>
             </div>
           </div>
+          <button
+            type="button"
+            className="logout-button"
+            data-testid="dashboard-logout-button"
+            onClick={handleLogout}
+          >
+            Sign out
+          </button>
         </div>
       </aside>
 
@@ -196,6 +221,14 @@ export default function OperationsLayout({
                 label="Review Queue"
                 onClick={() => setMobileMenuOpen(false)}
               />
+              <button
+                type="button"
+                className="drawer-logout-button"
+                data-testid="dashboard-mobile-logout-button"
+                onClick={handleLogout}
+              >
+                Sign out
+              </button>
             </nav>
           </div>
         </div>
@@ -249,6 +282,15 @@ export default function OperationsLayout({
           </span>
           <span className="nav-text">Review</span>
         </Link>
+        <button
+          type="button"
+          className="bottom-nav-item bottom-nav-btn"
+          data-testid="dashboard-bottom-logout-button"
+          onClick={handleLogout}
+        >
+          <span className="nav-icon">↪</span>
+          <span className="nav-text">Logout</span>
+        </button>
       </div>
 
       <style jsx global>{`
@@ -469,6 +511,26 @@ export default function OperationsLayout({
         .user-role {
           color: var(--text-light);
           font-size: 0.75rem;
+        }
+
+        .logout-button,
+        .drawer-logout-button {
+          width: 100%;
+          margin-top: 12px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 10px;
+          background: rgba(255, 255, 255, 0.06);
+          color: var(--text-light);
+          cursor: pointer;
+          font-weight: 700;
+          padding: 10px 12px;
+          text-align: center;
+        }
+
+        .logout-button:hover,
+        .drawer-logout-button:hover {
+          background: rgba(255, 255, 255, 0.12);
+          color: #ffffff;
         }
 
         /* ── Main Workspace Area ── */

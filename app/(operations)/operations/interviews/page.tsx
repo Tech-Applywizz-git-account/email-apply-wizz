@@ -1,4 +1,5 @@
 import { FilteredEmailTable } from "@/components/operations/FilteredEmailTable";
+import { requireDashboardSession } from "@/lib/dashboardAuth/requireDashboardSession";
 import { getInterviewRows } from "@/lib/zoho/operationsTable";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,8 @@ function formatDate(value: string | null): string {
 }
 
 export default async function InterviewsPage({ searchParams }: { searchParams: SearchParams }) {
+  await requireDashboardSession();
+
   const params = await searchParams;
   const search = valueFrom(params.search);
   const from = valueFrom(params.from);
