@@ -32,7 +32,11 @@ Completed and reviewed:
 
 Current slice:
 - Slice 12 planning only: middleware/session-switch and session-protected dashboard access
-- Pending Fable plan review and explicit owner approval before implementation
+- Initial Slice 12 plan review verdict: CHANGES REQUIRED
+- Reviewer findings were architectural plan corrections, not implementation defects.
+- Required plan changes have now been incorporated.
+- Slice 12 implementation remains blocked pending Claude/Fable re-review and explicit owner approval.
+- No production code has been changed.
 
 Current rules:
 - Basic Auth must remain active until an explicitly approved slice changes it.
@@ -62,10 +66,10 @@ Slice 11 non-blocking observations:
 - Production rollout still requires DASHBOARD_TOTP_ENCRYPTION_KEY, DASHBOARD_LOGIN_CHALLENGE_SECRET, seeded dashboard_users, and completion/review of the middleware/session-switch slice.
 
 Next expected human-approved task:
-- Review the Slice 12 middleware/session-switch plan before any implementation.
+- Claude/Fable re-review of the revised Slice 12 middleware/session-switch plan before any implementation.
 
 Last run:
-- 2026-07-12: Slice 11 marked PASS from Fable APPROVED verdict; Slice 12 plan prepared as documentation only
+- 2026-07-12: Slice 12 plan revised after CHANGES REQUIRED review; documentation only, no production code changed
 
 Loop readiness audit:
 - 100/100 (L3), report-only safe start

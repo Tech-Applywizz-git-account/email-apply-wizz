@@ -1,45 +1,112 @@
-# Dashboard Auth Phase 1 Slice 12 Plan: Session Switch and Route Protection
+# Dashboard Auth Phase 1 Slice 12 Plan: Session Switch Under Basic Auth
 
-Status: plan only. Do not implement without Fable review and explicit owner approval.
+Status: revised plan only. Do not implement without Claude/Fable APPROVED review and explicit owner approval.
+
+## Review Status
+
+Previous planning commit:
+
+- `c59734dfc562e7c083af3ace579840afe39f23c1`
+
+Independent review verdict:
+
+- `CHANGES REQUIRED`
+
+This revision incorporates owner decisions and architectural corrections only. No production code is approved by this document.
+
+## Confirmed Owner Decisions
+
+- Include logout in Slice 12.
+- Do not create a separate access-denied page.
+- Keep Basic Auth during Phase A.
+- `/dashboard` remains a protected standalone Email Tracker business page.
+- `/overview` remains the authenticated post-login and post-setup landing page because repository evidence confirms it is the primary COO operations workspace.
+- Role-based authorization is deferred. Slice 12 validates session usability only.
+- Protect additional operations-shell routes now:
+  - `/applications`
+  - `/applications/[applicationId]`
+  - `/mailboxes`
+  - `/ca-portfolio`
+- Use authoritative per-page server guards.
+- Never rely on `app/(operations)/layout.tsx` as the sole authentication boundary.
+- Do not import `getDashboardSessionByToken()` directly into middleware.
+- Do not modify `sessionStore.ts` merely to make it middleware-compatible.
+- No implementation is approved until this revised plan receives an APPROVED review.
 
 ## Goal
 
-Replace Basic Auth as the active dashboard gate with the reviewed app-owned dashboard session flow.
+Slice 12 Phase A adds the dashboard-session authorization layer underneath the still-active Basic Auth layer.
 
-Slice 12 should make existing business dashboard routes require a valid `dashboard_session` backed by `dashboard_sessions` and an active `dashboard_users` row. Unauthenticated or invalid sessions should go to `/dashboard/login`. Authenticated users should land on `/overview`.
+Users still pass Basic Auth first. After that, every protected business page must independently validate the `dashboard_session` cookie server-side with the reviewed session-store helper before rendering protected content.
 
-This slice must preserve the restored Email Tracker Dashboard at `/dashboard`, keep the Slice 10 auth APIs thin, and avoid any role/data-scope expansion beyond the Phase 1 broad-dashboard admin gate.
+Successful login/setup continues to land on `/overview`. `/dashboard` remains protected, but it remains the standalone Supabase-backed Email Tracker business interface, not the post-login landing page.
+
+## Two-Phase Basic Auth Transition
+
+### Phase A: Slice 12
+
+Phase A is the only scope proposed for Slice 12.
+
+- Keep existing Basic Auth middleware behavior unchanged.
+- Keep Basic Auth over `/dashboard/login`.
+- Keep Basic Auth over the dashboard authentication API routes.
+- Add the new dashboard-session authorization layer underneath Basic Auth.
+- Confirm browsers and Playwright `httpCredentials` can use `/dashboard/login` and same-origin authentication API calls while Basic Auth remains active.
+- Keep `DASHBOARD_SECRET` configured.
+- Do not remove the existing `DASHBOARD_SECRET` configuration check from `app/dashboard/page.tsx`.
+- Include logout as a Phase A route and UI action, still behind Basic Auth.
+- Do not push or deploy as part of plan approval or implementation.
+
+During Phase A, Basic Auth remains the outer operational gate and the new dashboard session guard becomes the inner application-auth gate.
+
+### Phase B: Separate Review and Approval
+
+Phase B is not part of Slice 12.
+
+Only after preview/staging verification and production `dashboard_users` seeding:
+
+- Remove Basic Auth from middleware.
+- Remove route-level Basic Auth gates from dashboard auth API routes.
+- Review and remove or replace the `DASHBOARD_SECRET` configuration check inside `app/dashboard/page.tsx`.
+- Verify the new session authentication system independently protects all intended routes.
+- Run production-like smoke tests with a real seeded `admin_ceo` dashboard user.
+- Obtain explicit approval before production rollout.
+
+Basic Auth removal is explicitly out of scope for Slice 12 Phase A.
 
 ## Current-State Analysis
 
 ### Current Middleware
 
 - `middleware.ts` currently enforces Basic Auth only.
-- Protected paths are `/dashboard`, `/overview`, `/live-monitor`, `/clients`, `/operations`, and `/review-queue`.
-- The matcher covers `/dashboard/:path*`, `/overview`, `/live-monitor/:path*`, `/clients/:path*`, `/operations/:path*`, and `/review-queue`.
-- Basic Auth uses username `admin` and `DASHBOARD_SECRET`.
+- Current middleware protects `/dashboard`, `/overview`, `/live-monitor`, `/clients`, `/operations`, and `/review-queue`.
 - Because `/dashboard/:path*` is matched, `/dashboard/login` is currently also behind Basic Auth.
+- Slice 12 Phase A keeps this behavior unchanged.
+- The project currently emits a Next.js 16.2.9 middleware deprecation warning. A future `proxy.ts` migration may be considered, but that migration is not required to establish the Slice 12 security boundary. Do not expand Slice 12 merely to eliminate the warning unless implementation proves it is necessary.
 
 ### Current Dashboard Route
 
 - `/dashboard` is restored to the pre-Slice-11 Email Tracker Dashboard from `fdd1caf`.
 - It queries Supabase and renders recent Zoho email/classification data.
-- It still contains a dashboard-secret configuration check inherited from the Basic Auth era. Slice 12 must decide whether that check is removed, replaced, or left harmless after route-level session protection.
+- It contains a `DASHBOARD_SECRET` configuration check inherited from the Basic Auth era.
+- Phase A must not remove that check.
 
 ### Current Login Route
 
-- `/dashboard/login` is a server component that reads the `dashboard_session` cookie.
+- `/dashboard/login` is a server component that reads `dashboard_session`.
 - It calls `getDashboardSessionByToken(rawToken)`.
 - It redirects to `/overview` only when the helper returns a usable session.
-- Missing, fake, expired, revoked, disabled-user, malformed, or failed DB lookup cases render the login flow.
+- Missing, fake, expired, revoked, disabled-user, malformed, or DB-failure session cases render the login flow.
+- In Phase A, this route remains behind Basic Auth and also remains public to the new dashboard-session layer.
 
 ### Current `/overview` Protection Status
 
-- `/overview` is protected only by Basic Auth middleware today.
-- It does not yet validate `dashboard_session`.
-- It is the current authenticated landing page used by the login UI after successful setup/login.
+- `/overview` is the primary COO operations workspace.
+- The Slice 11 login UI redirects to `/overview` after successful setup/login.
+- The operations layout and current tests treat `/overview` as the authenticated landing page.
+- Today it is protected only by Basic Auth. Phase A adds a per-page dashboard-session guard.
 
-### Current Session-Cookie Path
+### Current Session Cookie and Validation Path
 
 - Slice 10 auth routes set `dashboard_session` after successful TOTP setup or returning-user TOTP login.
 - Cookie attributes are `HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age=43200`, and `Secure` in production.
@@ -49,8 +116,8 @@ This slice must preserve the restored Email Tracker Dashboard at `/dashboard`, k
 ### Current Logout and Revocation
 
 - `revokeDashboardSession` and `revokeDashboardSessionsForUser` exist in `lib/dashboardAuth/sessionStore.ts`.
-- No logout route or UI exists.
-- No cookie-clearing flow exists.
+- No logout route or UI exists yet.
+- Slice 12 Phase A must add logout.
 
 ### Existing Auth APIs
 
@@ -59,197 +126,160 @@ This slice must preserve the restored Email Tracker Dashboard at `/dashboard`, k
   - `POST /api/dashboard/auth/verify-otp`
   - `POST /api/dashboard/auth/complete-totp-setup`
   - `POST /api/dashboard/auth/verify-totp`
-- These routes currently include route-level Basic Auth because `middleware.ts` does not protect `/api/**`.
-- Before Basic Auth can be replaced, the login APIs must be reachable without Basic Auth while preserving strict JSON validation, generic failures, rate limits, and signed challenge requirements.
+- These routes currently include route-level Basic Auth.
+- Phase A keeps those Basic Auth gates.
+- Same-origin browser requests from `/dashboard/login` can call these APIs after the user has passed Basic Auth because the browser includes Basic Auth credentials for the protected origin. Playwright should continue using `httpCredentials` for Phase A flow tests.
 
-### Legacy Mechanism Being Replaced
+### Legacy Mechanism
 
-- Basic Auth with `DASHBOARD_SECRET` is the current live authentication mechanism.
-- Slice 12 should not remove rollback ability until the session-switch implementation is reviewed and verified.
+- Basic Auth with username `admin` and `DASHBOARD_SECRET` is the current live authentication mechanism.
+- Phase A adds app-owned authentication beneath it.
+- Phase B replaces Basic Auth only after separate approval.
 
-## Exact Proposed Scope
+## Final Landing Route
 
-### Likely Files to Change
+- Successful login redirects to `/overview`.
+- Successful first-time TOTP setup redirects to `/overview`.
+- A valid authenticated session visiting `/dashboard/login` redirects to `/overview`.
+- `/overview` is the primary authenticated COO operations landing page.
+- `/dashboard` remains protected but is not the post-login landing page.
+- `/dashboard` continues to display the standalone Supabase-backed Email Tracker business interface.
 
-- `middleware.ts`
-- `lib/middleware/basicAuth.test.ts` or equivalent middleware tests
-- `app/dashboard/login/page.tsx` and/or tests if route behavior needs adjustment
-- `app/api/dashboard/auth/_lib/basicAuthGate.ts` and route tests if Basic Auth is removed from login APIs
-- A new logout route, if approved:
-  - `app/api/dashboard/auth/logout/route.ts`
-  - `app/api/dashboard/auth/logout/route.test.ts`
-- A server-side dashboard session guard if middleware cannot safely call the current session helper:
-  - likely under `lib/dashboardAuth/` or an app route-group layout
-- Existing Playwright auth tests
-- `STATE.md` and `loop-run-log.md`
+Current implementation/test touchpoints using `/overview`:
 
-Do not edit implementation files until this plan is approved.
+- `components/dashboard-auth/dashboard-auth-client.tsx` redirects to `/overview` after successful setup/login.
+- `app/dashboard/login/page.tsx` redirects a valid existing session to `/overview`.
+- `tests/dashboard-auth.spec.ts` verifies successful setup/login navigation to `/overview`.
+- `app/(operations)/layout.tsx` identifies `/overview` as the Overview navigation route.
+- `app/page.tsx` includes an "Open COO Overview" link to `/overview`.
 
-### Protected Routes
+## Final Route Policy
 
-Require a valid dashboard session for:
+### Authoritative Protected Route Set
+
+The dashboard-session layer must protect:
 
 - `/dashboard`
 - `/overview`
-- `/live-monitor` and `/live-monitor/*`
-- `/clients` and `/clients/*`
-- `/operations` and `/operations/*`
+- `/live-monitor`
+- `/live-monitor/:path*`
+- `/clients/:path*`
+- `/operations/:path*`
 - `/review-queue`
+- `/applications`
+- `/applications/:path*`
+- `/mailboxes`
+- `/ca-portfolio`
 
-Phase 1 broad-dashboard access should be admin-only:
+The mock-data operations routes are protected now to prevent accidental exposure when they later receive live data.
 
-- `admin_ceo`: allowed.
-- `manager_ops`: login can succeed, but broad dashboards should show an access-denied/limited placeholder until Phase 2 scoping exists.
-- `ca`: login can succeed, but broad dashboards should show an access-denied/limited placeholder until Phase 2 scoping exists.
+### Public to the Dashboard-Session Layer
 
-If no access-denied route exists, Slice 12 should either add a minimal server-rendered `/dashboard/access-denied` page or defer non-admin login access to a generic safe landing page. This needs owner approval before implementation.
-
-### Public Routes
-
-Keep public:
+These routes are public to the new dashboard-session authorization layer:
 
 - `/`
 - `/dashboard/login`
-- `POST /api/dashboard/auth/request-otp`
-- `POST /api/dashboard/auth/verify-otp`
-- `POST /api/dashboard/auth/complete-totp-setup`
-- `POST /api/dashboard/auth/verify-totp`
-- Static assets and framework internals such as `/_next/*`, images, fonts, and metadata files.
+- `/api/dashboard/auth/*`
+- `/_next/*`
+- Static assets and metadata
 
-Do not make unrelated Zoho/test/cron APIs public or protected in this slice without inspecting their existing production use.
+During Phase A, `/dashboard/login` and `/api/dashboard/auth/*` still remain behind the existing Basic Auth layer even though they are public to the dashboard-session authorization layer.
 
-### Redirect Destinations
+Other Zoho, cron, worker, test, and unrelated APIs must remain untouched unless currently covered by Basic Auth.
 
-- Protected route with no valid session: redirect to `/dashboard/login`.
-- `/dashboard/login` with a valid session: redirect to `/overview`.
-- `/dashboard/login` with no/invalid session: render login UI.
-- Avoid preserving arbitrary redirect query parameters unless open-redirect controls are designed and reviewed.
-- If a return URL is added later, it must be restricted to same-origin relative paths from an allowlist.
+## Authoritative Guard Architecture
 
-### Invalid Session Behavior
+Create a new server-only helper, for example:
 
-For invalid, expired, revoked, disabled-user, malformed-token, missing-user, or DB-failure sessions:
+```ts
+requireDashboardSession()
+```
 
-- Fail closed.
-- Do not allow protected route access.
-- Redirect to `/dashboard/login` or render the login UI.
-- Do not expose failure reason to browser.
-- Do not log raw cookie/token/session hash/user id.
+It should:
 
-### Redirect Loop Prevention
+1. Read `dashboard_session` using `next/headers`.
+2. Call the already-reviewed `getDashboardSessionByToken()`.
+3. Return the valid session when `ok: true`.
+4. Redirect to `/dashboard/login` for every other result.
+5. Fail closed on exceptions.
+6. Never expose or log the raw session token.
 
-- `/dashboard/login` must remain outside the protected-route redirect path.
-- Auth API routes must remain outside dashboard session middleware.
-- Protected pages must not redirect valid sessions back to login.
-- Login page must not redirect invalid sessions to itself repeatedly; it should render login on validation failure.
+Call this helper at the top of every protected server page.
 
-### Business Dashboard Preservation
+For protected client-component pages:
 
-- `/dashboard` must continue rendering the restored Email Tracker Dashboard.
-- Do not relocate, redesign, or simplify the business dashboard.
-- Any Basic Auth-era `DASHBOARD_SECRET` check inside `/dashboard` should be addressed only if it blocks the session-switch goal, and the change must be minimal.
+- Move the existing client implementation into a dedicated client component if necessary.
+- Keep `page.tsx` as a thin server wrapper.
+- Call `requireDashboardSession()` in the server wrapper before rendering the client component.
 
-### Authenticated Landing Page
+Explicit constraints:
 
-- Keep `/overview` as the authenticated landing page for Phase 1 because Slice 10/11 already use it and the operations layout treats it as the overview entry.
-- `/dashboard/login` should redirect valid sessions to `/overview`.
+- Never rely on `app/(operations)/layout.tsx` as the sole authorization guard.
+- Layout caching and soft navigation make a layout-only guard insufficient.
+- Every protected page must enforce authorization independently on the server.
+- Do not import `getDashboardSessionByToken()` into middleware.
+- Do not alter `sessionStore.ts` or remove `server-only` to force middleware bundling.
+- Do not duplicate session hashing, expiry, revocation, user-status, or DB logic in pages.
 
-### Cookie Lifecycle
+## Middleware Role in Phase A
 
-- Continue using `dashboard_session`.
-- Keep 12-hour session lifetime and `Max-Age=43200`.
-- Keep `HttpOnly`, production `Secure`, `SameSite=Lax`, `Path=/`, and no Domain attribute.
-- Add logout only if approved in Slice 12: revoke the current DB session and clear the cookie using matching cookie attributes.
+Middleware remains limited to:
 
-### Logout Behavior
+- Existing Basic Auth.
+- Optional cookie-presence redirect as a user-experience optimization only.
 
-Recommended Slice 12 scope includes a minimal `POST /api/dashboard/auth/logout` because route protection should have a safe exit path.
+If cookie-presence routing is included:
 
-Logout should:
+- Cookie presence is not authentication.
+- Authoritative authentication remains the per-page server guard.
+- A fake, expired, revoked, disabled, malformed, or database-failure session must still be denied by the page guard.
 
-- Read `dashboard_session` server-side.
-- Call `revokeDashboardSession(rawToken)` when present.
-- Clear `dashboard_session` regardless of revoke result.
-- Return `{ "ok": true }` without exposing whether a token existed.
-- Avoid logging the token or DB errors.
+Do not import server-only dashboard auth helpers into middleware.
 
-If adding logout makes the slice too large, split it into Slice 12A after the session switch but before production rollout.
+## Role Scope
 
-### Middleware Runtime Compatibility
+Do not add an access-denied page in Slice 12.
 
-Critical blocker to resolve before implementation:
+Do not add role-placeholder routing in Slice 12.
 
-- `getDashboardSessionByToken` imports `server-only`, uses the service-role Supabase client, and performs database reads.
-- Next middleware may run in a middleware/proxy runtime that is not compatible with `server-only`, Node-only clients, or service-role database access.
-- Do not import `getDashboardSessionByToken` into middleware until this is verified.
+Phase 1 production users are seeded as `admin_ceo`.
 
-Recommended approach:
+Slice 12 validates only whether the user and session are usable. Role-specific authorization and role-specific pages are deferred to a later independently planned slice.
 
-1. Verify whether the current Next.js version/runtime allows Node-compatible middleware and Supabase service-role calls safely.
-2. If not, keep middleware lightweight and move full session validation into server-side guards/layouts/pages that can call `getDashboardSessionByToken`.
-3. Middleware may still handle path routing only if backed by server validation; it must not treat cookie presence as authentication.
+## Logout Architecture
 
-### Middleware-Compatible Validation
+Slice 12 must include:
 
-Do not introduce a stateless signed-cookie shortcut in Slice 12 unless it also preserves:
+- `POST /api/dashboard/auth/logout`
 
-- server-side revocation,
-- user disabling,
-- session expiry,
-- token hashing,
-- and DB failure fail-closed behavior.
+Required behavior:
 
-If middleware cannot query the database, prefer a server guard over a weaker middleware validator.
+1. During Phase A, call `requireDashboardBasicAuth()` first, consistent with sibling auth routes.
+2. Apply a same-origin `Origin` or `Sec-Fetch-Site` check if compatible with the project's existing API conventions.
+3. Read `dashboard_session` server-side.
+4. When present, call `revokeDashboardSession(rawToken)`.
+5. Do not expose whether the token existed or revocation succeeded.
+6. Always clear the cookie.
+7. Always return `200 { "ok": true }`.
+8. Work for missing, malformed, expired, already-revoked, or otherwise invalid cookies.
+9. Never log the session token.
+10. Do not require a request body.
 
-### Production Environment Requirements
+Cookie clearing must use the same:
 
-Before rollout:
+- Cookie name
+- Path
+- `httpOnly`
+- `sameSite`
+- `secure`
 
-- `DASHBOARD_SESSION_SECRET` must exist.
-- `DASHBOARD_TOTP_ENCRYPTION_KEY` must exist.
-- `DASHBOARD_LOGIN_CHALLENGE_SECRET` must exist.
-- Microsoft OTP env vars must exist:
-  - `MICROSOFT_TENANT_ID`
-  - `MICROSOFT_CLIENT_ID`
-  - `MICROSOFT_CLIENT_SECRET`
-  - `MICROSOFT_OTP_FROM_EMAIL`
-- `dashboard_users` must contain approved staff users and at least one `admin_ceo`.
-- Secrets must be verified by presence only; never print values.
+and set `maxAge: 0` or equivalent expiration.
 
-### User Seeding
+Add a minimal logout UI action in the operations navigation:
 
-Production seeding should be a separate explicit operator step unless a reviewed seed/admin bootstrap task is approved.
-
-At minimum:
-
-- Seed one Admin/CEO user from a reviewed source.
-- Do not hardcode real emails in code.
-- Confirm `status = active` and `role = admin_ceo`.
-- Manager Ops and CA users may be allowed to login but must not access broad dashboards until Phase 2 scoping exists.
-
-### Rollout Strategy
-
-1. Keep current production unchanged until implementation is reviewed.
-2. Create a backup branch/tag at the pre-switch point.
-3. Verify required env var presence in Preview without printing values.
-4. Apply any user seed in Preview/staging only after explicit approval.
-5. Deploy Preview.
-6. Smoke test:
-   - unauthenticated protected route redirects to `/dashboard/login`;
-   - login OTP and TOTP complete;
-   - valid session reaches `/overview`;
-   - invalid/fake session fails closed;
-   - logout clears access if included;
-   - `/dashboard` business UI remains intact.
-7. Only after approval, deploy/promote production.
-8. Keep rollback path to the last Basic Auth deployment.
-
-### Rollback Strategy
-
-- Revert the Slice 12 implementation commit or redeploy the last known Basic Auth production deployment.
-- Do not delete auth tables or seeded users during rollback.
-- Keep `DASHBOARD_SECRET` available until production session auth is confirmed stable.
-- If logout route was added, rollback should restore previous route behavior without requiring schema changes.
+- POST to the logout endpoint.
+- Hard-navigate to `/dashboard/login` after completion.
+- Avoid depending on a soft router transition for clearing authenticated client state.
 
 ## Security Analysis
 
@@ -257,18 +287,19 @@ At minimum:
 
 - Session validation must fail closed on missing token, malformed token, DB error, missing session, expired session, revoked session, disabled user, or missing user.
 - Login APIs should preserve generic failure shapes and account-enumeration safety.
+- Phase A still has Basic Auth as an outer gate, but the dashboard-session layer must be correct independently.
 
 ### Database Outage
 
-- Protected routes should deny access or render login on DB failure.
-- Do not allow access because validation cannot be completed.
-- User-facing copy should remain generic.
+- Protected pages should redirect to `/dashboard/login` or deny access on DB failure.
+- Do not allow protected content because validation cannot be completed.
+- User-facing behavior should remain generic.
 
 ### Cookie Replay and Token Hashing
 
 - Raw session tokens live only in the HttpOnly cookie and route/server memory.
 - DB stores `session_hash`, not raw tokens.
-- Replay remains possible until expiry/revocation if an HttpOnly cookie is stolen; keep `Secure`, `SameSite=Lax`, short 12-hour lifetime, and revocation support.
+- Replay remains possible until expiry/revocation if an HttpOnly cookie is stolen; keep `Secure`, `SameSite=Lax`, 12-hour lifetime, and revocation support.
 
 ### Secret Rotation
 
@@ -277,39 +308,18 @@ At minimum:
 - `DASHBOARD_LOGIN_CHALLENGE_SECRET` rotation invalidates in-flight login challenges only.
 - Do not rotate secrets in Slice 12.
 
-### Session Expiry and Revocation
+### Session Expiry, Revocation, and User Disabling
 
-- Use `getDashboardSessionByToken` so expiry, revoked_at, and disabled-user checks stay centralized.
-- Logout should call reviewed revocation helpers if included.
-
-### User Disabling
-
+- Use `getDashboardSessionByToken` through `requireDashboardSession()` so expiry, revoked_at, missing user, and disabled-user checks stay centralized.
+- Logout should call reviewed revocation helpers.
 - A disabled `dashboard_users` row must invalidate access on next validation.
-- Do not rely only on session row existence.
 
-### Middleware Bypass Risks
+### Bypass Risks
 
-- Matcher must cover every business dashboard route and nested route.
-- Server-side guards/layouts should protect any route that middleware cannot safely validate.
-- Auth APIs and static assets should be intentionally excluded.
-
-### Matcher Configuration
-
-Recommended protected matcher set:
-
-- `/dashboard`
-- `/overview`
-- `/live-monitor/:path*`
-- `/clients/:path*`
-- `/operations/:path*`
-- `/review-queue`
-
-Explicitly exclude:
-
-- `/dashboard/login`
-- `/api/dashboard/auth/:path*`
-- `/_next/:path*`
-- static files and metadata.
+- Every protected page must call the server guard.
+- The operations layout must not be the sole guard.
+- Soft navigation must not allow stale layout state to bypass page authorization.
+- Auth APIs and static assets should be intentionally excluded from the dashboard-session layer.
 
 ### Open Redirect Risk
 
@@ -330,70 +340,154 @@ Never log:
 - Microsoft access token,
 - DB error bodies containing sensitive data.
 
-### Runtime Incompatibilities
+## Required Tests
 
-- Verify middleware/proxy runtime before using Node crypto, Supabase service role, or `server-only` helpers.
-- If incompatible, use a server component/layout guard for full validation.
+### Guard Tests
 
-## Test Plan
+For every protected route category, cover:
 
-### Unit/Route Tests
+- No cookie
+- Fake cookie
+- Malformed cookie
+- Expired session
+- Revoked session
+- Disabled user
+- Missing user
+- Database failure
+- Valid session
 
-- Middleware/proxy no-cookie behavior.
-- Middleware/proxy fake-cookie behavior.
-- Middleware/proxy matcher exclusions for login/auth APIs/static assets.
-- Server guard validates:
-  - no cookie,
-  - fake cookie,
-  - malformed cookie,
-  - expired session,
-  - revoked session,
-  - disabled user,
-  - missing user,
-  - database failure,
-  - valid session.
-- `/dashboard/login` redirects valid sessions to `/overview`.
-- Protected route redirects invalid sessions to `/dashboard/login`.
-- Public routes remain accessible.
-- No redirect loop between `/dashboard/login` and protected routes.
-- Logout invalidates access if logout is included.
+Use representative parameterized tests where practical, but every newly protected route must be covered.
 
-### Playwright/E2E
+Protected route categories include:
 
-- Original `/dashboard` business UI remains intact after authentication.
-- No cookie: `/overview` and `/dashboard` go to `/dashboard/login`.
-- Fake cookie: protected routes do not render business dashboards.
-- Valid session: `/overview` renders authenticated page.
-- Login page with valid session redirects to `/overview`.
-- Logout clears cookie and access if included.
-- Auth APIs remain callable without Basic Auth after Basic Auth replacement.
-- No Basic Auth prompt on protected routes after switch.
-- Real database-backed valid-session E2E coverage using safe seeded test data or isolated Preview/Supabase test data.
+- `/dashboard`
+- `/overview`
+- `/live-monitor`
+- `/clients`
+- `/operations`
+- `/review-queue`
+- `/applications`
+- `/applications/[applicationId]`
+- `/mailboxes`
+- `/ca-portfolio`
 
-### Regression Tests
+### Route-Policy Tests
+
+- `/dashboard/login` remains accessible under Phase A Basic Auth credentials.
+- Valid session visiting `/dashboard/login` redirects to `/overview`.
+- Invalid session visiting a protected page redirects to `/dashboard/login`.
+- `/dashboard` renders the original Email Tracker Dashboard after valid authentication.
+- `/overview` renders as the authenticated landing page.
+- `/applications` is protected.
+- `/applications/[applicationId]` is protected.
+- `/mailboxes` is protected.
+- `/ca-portfolio` is protected.
+
+### Layout Bypass and Soft-Navigation Test
+
+Add a test that:
+
+1. Starts with a valid authenticated session.
+2. Loads a protected route.
+3. Revokes or expires the session server-side.
+4. Attempts client-side navigation to another protected sibling route.
+5. Confirms access is denied.
+
+This proves no layout-cache or soft-navigation bypass exists.
+
+### Logout Tests
+
+- Logout with valid cookie.
+- Logout with no cookie.
+- Logout with malformed cookie.
+- Logout with already-revoked session.
+- Double logout returns success both times.
+- Cookie is cleared.
+- Session is revoked when valid.
+- No token or revocation state is leaked.
+- Protected route access is denied after logout.
+- Same-origin protection behavior, if added.
+
+### Phase A Coexistence Tests
+
+- Basic Auth remains required.
+- Dashboard login flow works while Basic Auth is active.
+- Same-origin authentication API requests work with Basic Auth credentials.
+- Dashboard session protection functions underneath Basic Auth.
+
+### Deferred Test Requirement
+
+A real database-backed valid-session E2E test using isolated seeded preview/test data is mandatory before Phase B Basic Auth removal, but it does not block the Phase A implementation commit if the test environment is not safely available.
+
+### Regression Verification
 
 - Existing Slice 10 auth API tests still pass.
 - Existing Slice 11 frontend tests still pass.
-- `npx vitest run`, `npm run lint`, and `npm run build` must pass.
+- `npx vitest run`, `npm run lint`, and `npm run build` must pass for implementation.
 
-## Deployment Prerequisites
+## Production Prerequisites
+
+Production deployment is not part of the current approval.
+
+Before production rollout:
 
 - `DASHBOARD_SESSION_SECRET`
 - `DASHBOARD_TOTP_ENCRYPTION_KEY`
 - `DASHBOARD_LOGIN_CHALLENGE_SECRET`
-- Microsoft Graph OTP env vars
-- Production `dashboard_users` seeded with at least one active `admin_ceo`
-- Schema verification for all four dashboard auth tables
-- Safe operator/bootstrap process for users
-- Secret presence verification without exposing values
-- Backup branch or tag before switch
-- Preview/staging verification before production
-- Rollback checkpoint to the last Basic Auth deployment
+- Microsoft Graph OTP env vars:
+  - `MICROSOFT_TENANT_ID`
+  - `MICROSOFT_CLIENT_ID`
+  - `MICROSOFT_CLIENT_SECRET`
+  - `MICROSOFT_OTP_FROM_EMAIL`
+- `DASHBOARD_SECRET` retained through Phase A
+- Four authentication tables verified:
+  - `dashboard_users`
+  - `dashboard_email_otps`
+  - `dashboard_sessions`
+  - `dashboard_auth_audit_events`
+- At least one active `admin_ceo` dashboard user seeded
+- Safe bootstrap/operator procedure
+- Presence-only secret verification
+- Preview/staging smoke test
+- Backup branch or release tag
+- Rollback to the last Basic Auth deployment
+- Session revocation/recovery procedure
+
+Never print secret values while verifying prerequisites.
+
+## Rollout and Rollback
+
+### Phase A Rollout
+
+1. Keep current production unchanged until implementation is reviewed.
+2. Verify required env var presence without printing values.
+3. Seed at least one active `admin_ceo` dashboard user in the target environment through an approved operator process.
+4. Deploy to Preview/staging only after explicit approval.
+5. Smoke test Basic Auth plus dashboard-session behavior together.
+6. Obtain approval before any production deploy.
+
+### Phase B Rollout
+
+Phase B requires a new plan and review before Basic Auth removal.
+
+### Rollback
+
+- Revert the Slice 12 implementation commit or redeploy the last known Basic Auth deployment.
+- Do not delete auth tables or seeded users during rollback.
+- Keep `DASHBOARD_SECRET` available through Phase A.
+- Logout route rollback should not require schema changes.
 
 ## Explicit Out of Scope
 
-Do not include unless repository evidence or owner approval makes it required:
+Do not include in Slice 12 Phase A:
 
+- Basic Auth removal
+- Route-level Basic Auth gate removal
+- `DASHBOARD_SECRET` removal
+- `DASHBOARD_SECRET` check removal from `app/dashboard/page.tsx`
+- role-based authorization
+- access-denied page
+- role-placeholder pages
 - Leads API data scoping
 - Manager/CA scoped dashboards
 - New dashboard metrics
@@ -411,17 +505,15 @@ Do not include unless repository evidence or owner approval makes it required:
 
 ## Execution Gates
 
-1. Fable plan review.
+1. Claude/Fable re-review of this revised plan.
 2. Explicit owner approval before implementation.
 3. Codex GPT-5.5 High implementation.
 4. Full automated verification.
-5. Fable independent code review.
+5. Claude/Fable independent code review.
 6. Explicit approval before push.
 7. Explicit approval before deploy.
 
-## Open Owner Decisions
+## Remaining Decisions Before Implementation
 
-- Should Slice 12 include logout, or should logout be a separate Slice 12A?
-- Should non-admin roles see a minimal access-denied page in Slice 12, or should only the first Admin/CEO be seeded before production switch?
-- Should the Basic Auth route-level gate be removed from auth APIs in Slice 12, or kept behind a temporary operator-only rollout mode until production seed is verified?
-- Should `/dashboard` remain a protected business dashboard route, or should `/overview` be the only authenticated landing page while `/dashboard` remains legacy?
+- Confirm same-origin protection shape for logout: `Origin`, `Sec-Fetch-Site`, or both.
+- Confirm safe seeded test strategy for real DB-backed valid-session E2E before Phase B.
