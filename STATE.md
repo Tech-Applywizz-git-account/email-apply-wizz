@@ -22,9 +22,10 @@ Completed and reviewed:
 - Slice 7: server-side auth orchestration
 - Slice 8: OTP/TOTP rate limiting
 - Slice 9: signed login challenges
+- Slice 10: HTTP route handlers + secure session cookie wiring
 
 Current slice:
-- Slice 10 implemented: HTTP route handlers + secure session cookie wiring
+- Slice 11 implemented: frontend dashboard auth flow
 - Pending review
 
 Current rules:
@@ -38,10 +39,10 @@ Current rules:
 - Stop at every human approval gate.
 
 Next expected human-approved task:
-- Slice 10 review: HTTP route handlers + secure session cookie wiring
+- Slice 11 review: frontend dashboard auth flow
 
 Last run:
-- 2026-07-11: Slice 10 implementation verified locally
+- 2026-07-12: Slice 11 implementation verified locally
 
 Loop readiness audit:
 - 100/100 (L3), report-only safe start
