@@ -24,8 +24,8 @@ Completed and reviewed:
 - Slice 9: signed login challenges
 
 Current slice:
-- Slice 10 pending: HTTP route handlers + secure session cookie wiring
-- No Slice 10 application code committed yet
+- Slice 10 implemented: HTTP route handlers + secure session cookie wiring
+- Pending review
 
 Current rules:
 - Basic Auth must remain active until an explicitly approved slice changes it.
@@ -38,10 +38,10 @@ Current rules:
 - Stop at every human approval gate.
 
 Next expected human-approved task:
-- Slice 10 implementation: route handlers + secure session cookie wiring
+- Slice 10 review: HTTP route handlers + secure session cookie wiring
 
 Last run:
-- 2026-07-11: Loop Engineering setup, report-only
+- 2026-07-11: Slice 10 implementation verified locally
 
 Loop readiness audit:
 - 100/100 (L3), report-only safe start
