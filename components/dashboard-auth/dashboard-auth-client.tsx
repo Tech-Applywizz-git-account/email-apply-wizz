@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IconArrowRight, IconCheck, IconMail, IconRefresh, IconWarning } from "@/components/icons";
 
@@ -77,6 +77,7 @@ function StepChip({
 
 export function DashboardAuthClient() {
   const router = useRouter();
+  const busyRef = useRef(false);
   const [step, setStep] = useState<AuthStep>("email");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
@@ -102,6 +103,8 @@ export function DashboardAuthClient() {
   const activeStepIndex = step === "email" ? 0 : step === "otp" ? 1 : step === "setup" ? 2 : 3;
 
   function resetFlow() {
+    busyRef.current = false;
+    setBusy(false);
     setStep("email");
     setEmail("");
     setOtp("");
@@ -114,6 +117,32 @@ export function DashboardAuthClient() {
     setError("");
   }
 
+  function beginSubmission(): boolean {
+    if (busyRef.current) {
+      return false;
+    }
+
+    busyRef.current = true;
+    setBusy(true);
+    setError("");
+    return true;
+  }
+
+  function endSubmission(): void {
+    busyRef.current = false;
+    setBusy(false);
+  }
+
+  function clearSensitiveState(): void {
+    setOtp("");
+    setSetupCode("");
+    setLoginCode("");
+    setOtpId("");
+    setChallenge("");
+    setTotpSecret("");
+    setProvisioningUri("");
+  }
+
   async function handleRequestOtp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedEmail = email.trim();
@@ -122,22 +151,30 @@ export function DashboardAuthClient() {
       return;
     }
 
-    setBusy(true);
-    setError("");
-    const result = await postJson<RequestOtpResponse>("/api/dashboard/auth/request-otp", {
-      email: trimmedEmail,
-    });
-    setBusy(false);
+    if (!beginSubmission()) return;
 
-    const requestData = result.data;
-    if (!result.ok || !requestData || !requestData.ok) {
-      setError(GENERIC_FAILURE);
-      return;
+    try {
+      const result = await postJson<RequestOtpResponse>("/api/dashboard/auth/request-otp", {
+        email: trimmedEmail,
+      });
+
+      const requestData = result.data;
+      if (!result.ok || !requestData || !requestData.ok) {
+        setError(GENERIC_FAILURE);
+        return;
+      }
+
+      setOtpId(requestData.otpId);
+      setOtp("");
+      setSetupCode("");
+      setLoginCode("");
+      setChallenge("");
+      setTotpSecret("");
+      setProvisioningUri("");
+      setStep("otp");
+    } finally {
+      endSubmission();
     }
-
-    setOtpId(requestData.otpId);
-    setOtp("");
-    setStep("otp");
   }
 
   async function handleVerifyOtp(event: FormEvent<HTMLFormElement>) {
@@ -148,32 +185,38 @@ export function DashboardAuthClient() {
       return;
     }
 
-    setBusy(true);
-    setError("");
-    const result = await postJson<VerifyOtpResponse>("/api/dashboard/auth/verify-otp", {
-      otpId,
-      rawOtp: trimmedOtp,
-    });
-    setBusy(false);
+    if (!beginSubmission()) return;
 
-    const verifyData = result.data;
-    if (!result.ok || !verifyData || !verifyData.ok) {
-      setError(GENERIC_FAILURE);
-      return;
-    }
+    try {
+      const result = await postJson<VerifyOtpResponse>("/api/dashboard/auth/verify-otp", {
+        otpId,
+        rawOtp: trimmedOtp,
+      });
 
-    if (verifyData.stage === "totp_setup_required") {
-      setChallenge(verifyData.challenge);
-      setTotpSecret(verifyData.totpSecret);
-      setProvisioningUri(verifyData.provisioningUri);
+      const verifyData = result.data;
+      if (!result.ok || !verifyData || !verifyData.ok) {
+        setError(GENERIC_FAILURE);
+        return;
+      }
+
+      setOtp("");
       setSetupCode("");
-      setStep("setup");
-      return;
-    }
+      setLoginCode("");
+      setError("");
 
-    setChallenge(verifyData.challenge);
-    setLoginCode("");
-    setStep("login");
+      if (verifyData.stage === "totp_setup_required") {
+        setChallenge(verifyData.challenge);
+        setTotpSecret(verifyData.totpSecret);
+        setProvisioningUri(verifyData.provisioningUri);
+        setStep("setup");
+        return;
+      }
+
+      setChallenge(verifyData.challenge);
+      setStep("login");
+    } finally {
+      endSubmission();
+    }
   }
 
   async function handleCompleteSetup(event: FormEvent<HTMLFormElement>) {
@@ -184,22 +227,26 @@ export function DashboardAuthClient() {
       return;
     }
 
-    setBusy(true);
-    setError("");
-    const result = await postJson<GenericOkResponse>("/api/dashboard/auth/complete-totp-setup", {
-      challenge,
-      code: trimmedCode,
-    });
-    setBusy(false);
+    if (!beginSubmission()) return;
 
-    const setupData = result.data;
-    if (!result.ok || !setupData || !setupData.ok) {
-      setError(GENERIC_FAILURE);
-      return;
+    try {
+      const result = await postJson<GenericOkResponse>("/api/dashboard/auth/complete-totp-setup", {
+        challenge,
+        code: trimmedCode,
+      });
+
+      const setupData = result.data;
+      if (!result.ok || !setupData || !setupData.ok) {
+        setError(GENERIC_FAILURE);
+        return;
+      }
+
+      clearSensitiveState();
+      router.replace("/overview");
+      router.refresh();
+    } finally {
+      endSubmission();
     }
-
-    router.replace("/overview");
-    router.refresh();
   }
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
@@ -210,22 +257,26 @@ export function DashboardAuthClient() {
       return;
     }
 
-    setBusy(true);
-    setError("");
-    const result = await postJson<GenericOkResponse>("/api/dashboard/auth/verify-totp", {
-      challenge,
-      code: trimmedCode,
-    });
-    setBusy(false);
+    if (!beginSubmission()) return;
 
-    const loginData = result.data;
-    if (!result.ok || !loginData || !loginData.ok) {
-      setError(GENERIC_FAILURE);
-      return;
+    try {
+      const result = await postJson<GenericOkResponse>("/api/dashboard/auth/verify-totp", {
+        challenge,
+        code: trimmedCode,
+      });
+
+      const loginData = result.data;
+      if (!result.ok || !loginData || !loginData.ok) {
+        setError(GENERIC_FAILURE);
+        return;
+      }
+
+      clearSensitiveState();
+      router.replace("/overview");
+      router.refresh();
+    } finally {
+      endSubmission();
     }
-
-    router.replace("/overview");
-    router.refresh();
   }
 
   const copyableSetupUri = provisioningUri || "";

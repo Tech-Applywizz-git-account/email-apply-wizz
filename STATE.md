@@ -25,8 +25,8 @@ Completed and reviewed:
 - Slice 10: HTTP route handlers + secure session cookie wiring
 
 Current slice:
-- Slice 11 implemented: frontend dashboard auth flow
-- Pending review
+- Slice 11 fixes implemented: dashboard restored, login moved to /dashboard/login, session validated server-side
+- Pending Claude re-review
 
 Current rules:
 - Basic Auth must remain active until an explicitly approved slice changes it.
@@ -39,10 +39,10 @@ Current rules:
 - Stop at every human approval gate.
 
 Next expected human-approved task:
-- Slice 11 review: frontend dashboard auth flow
+- Slice 11 re-review: dashboard restore and login route fix
 
 Last run:
-- 2026-07-12: Slice 11 implementation verified locally
+- 2026-07-12: Slice 11 fix verified locally
 
 Loop readiness audit:
 - 100/100 (L3), report-only safe start
