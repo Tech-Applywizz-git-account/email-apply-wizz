@@ -66,6 +66,18 @@ Phase B plan review status:
 - No real Preview execution has happened.
 - Infrastructure creation and Preview execution remain pending.
 - Unknown-flag CLI hardening has been added after approval.
+
+Phase B1 first-execution pre-flight (2026-07-12, Claude Code session):
+- Hardening/runbook commit e420ead37e42cc974f3ddcb34724fd0acf0ae37c diff-reviewed: UNKNOWN_FLAG allowlist rejection plus execution checklist; approved.
+- HEAD verified green: full Vitest 523 tests passed, lint passed, build passed.
+- Gate 5 step 1 completed: no-environment CLI smoke refused with INVALID_TARGET (exit 1); unknown-flag smoke refused with UNKNOWN_FLAG; conflicting-flags smoke refused with CONFLICTING_FLAGS. No database contact occurred.
+- Gate 2 presence-only audit via vercel env ls preview (names only, no values):
+  - PRESENT in Preview scope: MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, MICROSOFT_OTP_FROM_EMAIL, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
+  - MISSING from Preview scope: DASHBOARD_AUTH_E2E_TARGET, DASHBOARD_AUTH_SEED_TARGET, DASHBOARD_PREVIEW_SUPABASE_PROJECT_REF, DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF, DASHBOARD_SESSION_SECRET, DASHBOARD_TOTP_ENCRYPTION_KEY, DASHBOARD_LOGIN_CHALLENGE_SECRET, DASHBOARD_SECRET, DASHBOARD_TEST_ADMIN_EMAIL.
+  - HAZARD: Preview-scope NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are single values shared with Production, so a Preview deployment today would point at the production database. These must be overridden with dedicated Preview Supabase values in the Preview scope before any deploy/seed/E2E.
+  - HAZARD: DASHBOARD_SECRET absent from Preview scope means a Preview deployment would fail closed (Basic Auth 401 on every protected path, login unreachable) until added.
+- Gate 1 (dedicated Preview Supabase project) and Gate 3 (test mailbox) show no evidence of existing yet; both are owner infrastructure actions.
+- Execution stopped at the Gate 1-4 human/infrastructure boundary. No push, no deploy, no seed, no database contact, no env change.
 - Phase B1 tooling review verdict before fix: CHANGES REQUIRED.
 - Review blocking findings:
   1. CLI/E2E execution imported the server-only session store path.
