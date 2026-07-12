@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  PREVIEW_E2E_ACTION_TIMEOUT_MS,
+  PREVIEW_E2E_NAVIGATION_TIMEOUT_MS,
   PREVIEW_E2E_SOFT_NAV_LINK,
   runPreviewDashboardAuthE2EWithDeps,
   validatePreviewE2eEnvironment,
@@ -23,7 +25,15 @@ function env(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-function makeHarnessDeps(options: { linkThrows?: boolean; cleanupOk?: boolean; revokeOk?: boolean } = {}) {
+function makeHarnessDeps(
+  options: {
+    linkThrows?: boolean;
+    cleanupOk?: boolean;
+    revokeOk?: boolean;
+    revealVisible?: boolean;
+    secretWaitThrows?: boolean;
+  } = {},
+) {
   const events: string[] = [];
   const locator = (name: string) => ({
     fill: vi.fn(async () => events.push(`fill:${name}`)),
@@ -31,9 +41,17 @@ function makeHarnessDeps(options: { linkThrows?: boolean; cleanupOk?: boolean; r
       events.push(`click:${name}`);
       if (options.linkThrows && name === PREVIEW_E2E_SOFT_NAV_LINK) throw new Error("navigation failed");
     }),
-    isVisible: vi.fn(async () => false),
+    isVisible: vi.fn(async () => {
+      if (options.revealVisible && name === "Can't scan? Show setup key") return true;
+      return false;
+    }),
     textContent: vi.fn(async () => "JBSWY3DPEHPK3PXP"),
-    waitFor: vi.fn(async () => events.push(`wait:${name}`)),
+    waitFor: vi.fn(async () => {
+      if (options.secretWaitThrows && name === "dashboard-auth-totp-secret") {
+        throw new Error("Timeout 30000ms exceeded waiting for locator");
+      }
+      events.push(`wait:${name}`);
+    }),
   });
   const page = {
     goto: vi.fn(async (url: string) => events.push(`goto:${new URL(url).pathname}`)),
@@ -49,6 +67,8 @@ function makeHarnessDeps(options: { linkThrows?: boolean; cleanupOk?: boolean; r
   const context = {
     newPage: vi.fn(async () => page),
     close: vi.fn(async () => events.push("context-close")),
+    setDefaultTimeout: vi.fn(),
+    setDefaultNavigationTimeout: vi.fn(),
   };
   const browser = {
     newContext: vi.fn(async () => context),
@@ -78,6 +98,17 @@ function makeHarnessDeps(options: { linkThrows?: boolean; cleanupOk?: boolean; r
     page,
     promptForOtp,
     revokeSessionsForEmail,
+  };
+}
+
+function harnessDepsFor(deps: ReturnType<typeof makeHarnessDeps>) {
+  return {
+    createSupabase: deps.createSupabase,
+    disableAdmin: deps.disableAdmin,
+    fetch: deps.fetchMock,
+    launchBrowser: deps.launchBrowser,
+    promptForOtp: deps.promptForOtp,
+    revokeSessionsForEmail: deps.revokeSessionsForEmail,
   };
 }
 
@@ -266,6 +297,37 @@ describe("preview E2E harness flow", () => {
         revokeSessionsForEmail: deps.revokeSessionsForEmail,
       }),
     ).resolves.toEqual({ ok: false, code: "CLEANUP_FAILED" });
+  });
+
+  it("configures bounded action and navigation timeouts", async () => {
+    const deps = makeHarnessDeps();
+
+    await expect(runPreviewDashboardAuthE2EWithDeps(env(), harnessDepsFor(deps))).resolves.toEqual({ ok: true });
+
+    expect(deps.context.setDefaultTimeout).toHaveBeenCalledWith(PREVIEW_E2E_ACTION_TIMEOUT_MS);
+    expect(deps.context.setDefaultNavigationTimeout).toHaveBeenCalledWith(PREVIEW_E2E_NAVIGATION_TIMEOUT_MS);
+    expect(PREVIEW_E2E_ACTION_TIMEOUT_MS).toBe(30_000);
+  });
+
+  it("fails and cleans up when a setup control never appears", async () => {
+    const deps = makeHarnessDeps({ revealVisible: true, secretWaitThrows: true });
+
+    await expect(runPreviewDashboardAuthE2EWithDeps(env(), harnessDepsFor(deps))).rejects.toThrow(/Timeout/);
+    expect(deps.disableAdmin).toHaveBeenCalled();
+  });
+
+  it("times out with a deterministic failure and cleans up when the operator never enters an OTP", async () => {
+    const deps = makeHarnessDeps();
+    const neverResolves = vi.fn(() => new Promise<string>(() => {}));
+
+    await expect(
+      runPreviewDashboardAuthE2EWithDeps(env(), {
+        ...harnessDepsFor(deps),
+        promptForOtp: neverResolves,
+        otpInputTimeoutMs: 20,
+      }),
+    ).rejects.toThrow("OTP_INPUT_TIMEOUT");
+    expect(deps.disableAdmin).toHaveBeenCalled();
   });
 
   it("does not import the reviewed server-only session store", () => {

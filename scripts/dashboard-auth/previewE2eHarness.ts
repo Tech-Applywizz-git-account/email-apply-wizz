@@ -49,6 +49,8 @@ type PreviewBrowser = {
 type PreviewBrowserContext = {
   newPage(): Promise<PreviewPage>;
   close(): Promise<void>;
+  setDefaultTimeout(timeout: number): void;
+  setDefaultNavigationTimeout(timeout: number): void;
 };
 
 type PreviewLocator = {
@@ -75,9 +77,29 @@ export interface PreviewE2eHarnessDeps {
   fetch?: typeof fetch;
   revokeSessionsForEmail?: (params: { env: NodeJS.ProcessEnv; supabase: PreviewAdminSupabase }) => Promise<{ ok: boolean }>;
   disableAdmin?: (params: { env: NodeJS.ProcessEnv; supabase: PreviewAdminSupabase }) => Promise<{ ok: boolean }>;
+  otpInputTimeoutMs?: number;
 }
 
 const PROJECT_REF_PATTERN = /^[a-z0-9]{20}$/;
+// Bounded waits so a missing field, stalled page, or unanswered operator prompt
+// throws and reaches cleanup instead of hanging the run indefinitely.
+export const PREVIEW_E2E_ACTION_TIMEOUT_MS = 30_000;
+export const PREVIEW_E2E_NAVIGATION_TIMEOUT_MS = 30_000;
+export const PREVIEW_E2E_OTP_INPUT_TIMEOUT_MS = 10 * 60_000;
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 const PRODUCTION_HOSTS = new Set(["email-apply-wizz.vercel.app"]);
 export const PREVIEW_E2E_SOFT_NAV_LINK = "Clients";
 
@@ -258,8 +280,12 @@ export async function runPreviewDashboardAuthE2EWithDeps(
       password: guard.config.basicAuthSecret,
     },
   });
+  context.setDefaultTimeout(PREVIEW_E2E_ACTION_TIMEOUT_MS);
+  context.setDefaultNavigationTimeout(PREVIEW_E2E_NAVIGATION_TIMEOUT_MS);
   const page = await context.newPage();
-  const promptForOtp = deps.promptForOtp ?? defaultPromptForOtp;
+  const rawPromptForOtp = deps.promptForOtp ?? defaultPromptForOtp;
+  const otpInputTimeoutMs = deps.otpInputTimeoutMs ?? PREVIEW_E2E_OTP_INPUT_TIMEOUT_MS;
+  const promptForOtp = (prompt: string) => withTimeout(rawPromptForOtp(prompt), otpInputTimeoutMs, "OTP_INPUT_TIMEOUT");
   const revokeSessionsForEmail =
     deps.revokeSessionsForEmail ??
     ((params: { env: NodeJS.ProcessEnv; supabase: PreviewAdminSupabase }) => revokePreviewAdminSessionsForEmail(params));
