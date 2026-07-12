@@ -423,6 +423,26 @@ describe("preview dashboard admin disable mode", () => {
 });
 
 describe("preview dashboard admin CLI", () => {
+  it.each(["--dryrun", "--disable-user", "--force", "--production"])(
+    "rejects unknown flag %s before validation or client creation",
+    async (unknownFlag) => {
+      const createSupabase = vi.fn();
+      const { logger, lines } = makeLogger();
+
+      const result = await runSeedPreviewAdminCli({
+        args: [unknownFlag],
+        env: env({ DASHBOARD_AUTH_SEED_TARGET: "" }),
+        createSupabase,
+        logger,
+      });
+
+      expect(result).toEqual({ ok: false, code: "UNKNOWN_FLAG" });
+      expect(createSupabase).not.toHaveBeenCalled();
+      expect(lines.join("\n")).toContain("failed code=UNKNOWN_FLAG");
+      expect(lines.join("\n")).not.toContain("service-role-secret");
+    },
+  );
+
   it("rejects --disable --dry-run before creating a client", async () => {
     const createSupabase = vi.fn();
     const { logger, lines } = makeLogger();
@@ -450,6 +470,59 @@ describe("preview dashboard admin CLI", () => {
 
     expect(result).toEqual({ ok: false, code: "INVALID_TARGET" });
     expect(createSupabase).not.toHaveBeenCalled();
+  });
+
+  it("valid --dry-run still reaches seed mode", async () => {
+    const supabase = makeSupabase();
+    const createSupabase = vi.fn(() => supabase.client);
+
+    const result = await runSeedPreviewAdminCli({
+      args: ["--dry-run"],
+      env: env(),
+      createSupabase,
+    });
+
+    expect(result).toMatchObject({ ok: true, mode: "seed", action: "would_create" });
+    expect(createSupabase).toHaveBeenCalledTimes(1);
+    expect(supabase.users).toHaveLength(0);
+  });
+
+  it("valid --disable still reaches disable mode", async () => {
+    const supabase = makeSupabase([
+      {
+        id: "user-1",
+        email: "dashboard-auth-test@applywizz.ai",
+        email_normalized: "dashboard-auth-test@applywizz.ai",
+        role: "admin_ceo",
+        status: "active",
+      },
+    ]);
+    const createSupabase = vi.fn(() => supabase.client);
+
+    const result = await runSeedPreviewAdminCli({
+      args: ["--disable"],
+      env: env(),
+      createSupabase,
+    });
+
+    expect(result).toMatchObject({ ok: true, mode: "disable", action: "disabled" });
+    expect(createSupabase).toHaveBeenCalledTimes(1);
+    expect(supabase.users[0]).toMatchObject({ status: "disabled" });
+  });
+
+  it("no-flag seed mode remains supported", async () => {
+    const supabase = makeSupabase();
+    const createSupabase = vi.fn(() => supabase.client);
+
+    const result = await runSeedPreviewAdminCli({
+      args: [],
+      env: env(),
+      createSupabase,
+    });
+
+    expect(result).toMatchObject({ ok: true, mode: "seed", action: "created" });
+    expect(createSupabase).toHaveBeenCalledTimes(1);
+    expect(supabase.users).toHaveLength(1);
   });
 
   it("importing the CLI exposes validation without resolving server-only", async () => {

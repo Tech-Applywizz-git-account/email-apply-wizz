@@ -12,7 +12,8 @@ export type PreviewAdminToolErrorCode =
   | "DB_READ_FAILED"
   | "DB_WRITE_FAILED"
   | "REVOKE_FAILED"
-  | "CONFLICTING_FLAGS";
+  | "CONFLICTING_FLAGS"
+  | "UNKNOWN_FLAG";
 
 export type PreviewAdminToolResult =
   | {

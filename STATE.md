@@ -59,14 +59,21 @@ Phase B plan review status:
 - Owner approved creating and using a dedicated non-production Preview Supabase project for Phase B1.
 - Owner approved the Preview OTP mailbox direction: use a dedicated company-owned mailbox such as `dashboard-auth-test@applywizz.ai`.
 - Mailbox creation and Microsoft Graph OTP receipt verification remain operational prerequisites until the owner confirms them.
-- Phase B1 tooling review verdict: CHANGES REQUIRED.
+- Phase B1 tooling fix review verdict: APPROVED.
+- Approved fix commit: 66d0c855e3d8efe4beaa6b2487c573c19f654b39.
+- Tooling is approved for Preview-only execution once the required infrastructure exists.
+- Production execution remains prohibited.
+- No real Preview execution has happened.
+- Infrastructure creation and Preview execution remain pending.
+- Unknown-flag CLI hardening has been added after approval.
+- Phase B1 tooling review verdict before fix: CHANGES REQUIRED.
 - Review blocking findings:
   1. CLI/E2E execution imported the server-only session store path.
   2. E2E soft navigation targeted a non-existent Mailboxes navigation link.
   3. E2E startup did not require `DASHBOARD_AUTH_SEED_TARGET=preview` before cleanup.
   4. `--disable --dry-run` was ambiguous and not rejected.
   5. Production Supabase project reference was optional instead of mandatory.
-- Phase B1 tooling status: FIX IMPLEMENTED — PENDING DIFF RE-REVIEW.
+- Phase B1 tooling status: APPROVED FOR PREVIEW-ONLY EXECUTION AFTER INFRASTRUCTURE SETUP; UNKNOWN-FLAG HARDENING IMPLEMENTED LOCALLY.
 - No Supabase project, seed, environment, push, or deployment changes have occurred.
 
 Current rules:
@@ -97,10 +104,10 @@ Slice 11 non-blocking observations:
 - Production rollout still requires DASHBOARD_TOTP_ENCRYPTION_KEY, DASHBOARD_LOGIN_CHALLENGE_SECRET, seeded dashboard_users, and completion/review of the middleware/session-switch slice.
 
 Next expected human-approved task:
-- Independent diff re-review of Phase B1 tooling fixes before first execution, Supabase project creation, Vercel env changes, user seeding, Preview E2E execution, push, or deploy.
+- Owner infrastructure setup and controlled Preview-only execution using the Phase B1 runbook; no Production execution, Phase B removal, push, or deploy without explicit approval.
 
 Last run:
-- 2026-07-12: Phase B1 tooling fixes implemented locally for five blocking review findings; tooling remains unexecuted and pending independent diff re-review.
+- 2026-07-12: Phase B1 tooling fix approved; unknown-flag CLI hardening and first Preview execution checklist prepared locally; tooling remains unexecuted.
 
 Slice 12 Phase A implementation summary:
 - Added server-only requireDashboardSession guard using the reviewed getDashboardSessionByToken helper.
@@ -150,11 +157,14 @@ Phase B1 tooling summary:
 - Tooling resolves the Supabase project reference from `NEXT_PUBLIC_SUPABASE_URL` and refuses missing/malformed/equal Preview and production refs, production ref matches, and mismatches.
 - Disable mode marks the Preview test user disabled and revokes active sessions through an injected service-role update scoped to the exact Preview test user ID; CLI paths do not import the server-only session store.
 - `--disable --dry-run` is rejected before Supabase client creation.
+- Unknown CLI flags such as `--dryrun`, `--disable-user`, `--force`, and `--production` are rejected before environment validation or Supabase client creation.
 - Local operator-assisted Preview E2E requires both Preview target flags, checks Basic Auth before launching Chromium, revokes sessions by Preview test user before soft navigation, and uses the existing Clients navigation link.
 - Local operator-assisted Preview E2E harness is prepared but has not been executed.
-- Focused tooling tests: 2 files / 39 tests passed.
-- DashboardAuth tests: 18 files / 154 tests passed.
-- Full Vitest: 58 files / 516 tests passed.
+- First execution checklist:
+  - docs/superpowers/plans/2026-07-12-dashboard-auth-phase-b1-preview-execution-checklist.md
+- Focused tooling tests: 2 files / 46 tests passed.
+- DashboardAuth tests: 18 files / 161 tests passed.
+- Full Vitest: 58 files / 523 tests passed.
 - Lint passed.
 - Build passed with existing Next.js middleware deprecation warning.
 - git diff --check passed.

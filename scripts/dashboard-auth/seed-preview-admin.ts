@@ -16,6 +16,8 @@ const logger: PreviewAdminLogger = {
   error: (message) => console.error(`[DashboardAuthPreviewAdmin] ${message}`),
 };
 
+const ALLOWED_FLAGS = new Set(["--dry-run", "--disable"]);
+
 interface SeedPreviewAdminCliParams {
   args: string[];
   env: NodeJS.ProcessEnv;
@@ -27,6 +29,13 @@ export async function runSeedPreviewAdminCli(
   params: SeedPreviewAdminCliParams,
 ): Promise<PreviewAdminToolResult> {
   const loggerForRun = params.logger ?? logger;
+  const hasUnknownFlag = params.args.some((arg) => arg.startsWith("--") && !ALLOWED_FLAGS.has(arg));
+  if (hasUnknownFlag) {
+    const result: PreviewAdminToolResult = { ok: false, code: "UNKNOWN_FLAG" };
+    loggerForRun.error(`failed code=${result.code}`);
+    return result;
+  }
+
   const dryRun = params.args.includes("--dry-run");
   const disable = params.args.includes("--disable");
 
