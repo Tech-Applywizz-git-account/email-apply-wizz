@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   disablePreviewAdmin,
+  revokePreviewAdminSessionsForUser,
   sanitizeProjectRef,
   seedPreviewAdmin,
   type PreviewAdminSupabase,
 } from "../../scripts/dashboard-auth/previewAdminTool";
+import { runSeedPreviewAdminCli } from "../../scripts/dashboard-auth/seed-preview-admin";
 
 type Row = Record<string, unknown>;
 
@@ -32,12 +34,15 @@ function makeLogger() {
   };
 }
 
-function makeSupabase(initialRows: Row[] = [], options: { failUpdate?: boolean; failInsert?: boolean } = {}) {
+function makeSupabase(
+  initialRows: Row[] = [],
+  options: { failUpdate?: boolean; failSessionUpdate?: boolean; failInsert?: boolean } = {},
+) {
   const users = [...initialRows];
+  const sessionUpdates: Array<{ table: string; payload: Row; filters: Array<[string, unknown]> }> = [];
 
   const client: PreviewAdminSupabase = {
     from(table: string) {
-      expect(table).toBe("dashboard_users");
       return {
         select(columns: string) {
           return {
@@ -53,6 +58,7 @@ function makeSupabase(initialRows: Row[] = [], options: { failUpdate?: boolean; 
           };
         },
         insert(row: Row) {
+          expect(table).toBe("dashboard_users");
           return {
             select(columns: string) {
               return {
@@ -72,12 +78,20 @@ function makeSupabase(initialRows: Row[] = [], options: { failUpdate?: boolean; 
           };
         },
         update(payload: Row) {
+          const filters: Array<[string, unknown]> = [];
           return {
             eq(column: string, value: string) {
+              filters.push([column, value]);
               return {
+                is(isColumn: string, isValue: null) {
+                  filters.push([isColumn, isValue]);
+                  const shouldFail = table === "dashboard_sessions" ? options.failSessionUpdate : options.failUpdate;
+                  return Promise.resolve({ error: shouldFail ? { message: "update failed" } : null });
+                },
                 select(columns: string) {
                   return {
                     async maybeSingle() {
+                      expect(table).toBe("dashboard_users");
                       expect(columns).not.toBe("*");
                       if (options.failUpdate) return { data: null, error: { message: "update failed" } };
                       const index = users.findIndex((item) => item[column] === value);
@@ -95,7 +109,7 @@ function makeSupabase(initialRows: Row[] = [], options: { failUpdate?: boolean; 
     },
   };
 
-  return { client, users };
+  return { client, users, sessionUpdates };
 }
 
 describe("preview dashboard admin seed tool", () => {
@@ -131,6 +145,42 @@ describe("preview dashboard admin seed tool", () => {
         NEXT_PUBLIC_SUPABASE_URL: "https://zyxwvutsrqponmlkjihg.supabase.co",
         DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF: "zyxwvutsrqponmlkjihg",
       }),
+      supabase: makeSupabase().client,
+    });
+
+    expect(result).toEqual({ ok: false, code: "PRODUCTION_PROJECT_REF" });
+  });
+
+  it("requires an explicit production project reference", async () => {
+    const result = await seedPreviewAdmin({
+      env: env({ DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF: "" }),
+      supabase: makeSupabase().client,
+    });
+
+    expect(result).toEqual({ ok: false, code: "MISSING_PRODUCTION_PROJECT_REF" });
+  });
+
+  it("rejects malformed production project reference", async () => {
+    const result = await seedPreviewAdmin({
+      env: env({ DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF: "not-a-project-ref" }),
+      supabase: makeSupabase().client,
+    });
+
+    expect(result).toEqual({ ok: false, code: "MALFORMED_PRODUCTION_PROJECT_REF" });
+  });
+
+  it("rejects equal Preview and production project references", async () => {
+    const result = await seedPreviewAdmin({
+      env: env({ DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF: "abcdefghijklmnopqrst" }),
+      supabase: makeSupabase().client,
+    });
+
+    expect(result).toEqual({ ok: false, code: "PRODUCTION_PROJECT_REF" });
+  });
+
+  it("rejects mixed values that point the URL at production", async () => {
+    const result = await seedPreviewAdmin({
+      env: env({ NEXT_PUBLIC_SUPABASE_URL: "https://zyxwvutsrqponmlkjihg.supabase.co" }),
       supabase: makeSupabase().client,
     });
 
@@ -208,6 +258,15 @@ describe("preview dashboard admin seed tool", () => {
     expect(lines.join("\n")).not.toContain("service-role-secret");
     expect(lines.join("\n")).not.toContain("encrypted-secret");
     expect(lines.join("\n")).not.toContain("session-token");
+  });
+
+  it("dry-run seed performs no writes", async () => {
+    const supabase = makeSupabase();
+
+    const result = await seedPreviewAdmin({ env: env(), supabase: supabase.client, dryRun: true });
+
+    expect(result).toMatchObject({ ok: true, action: "would_create" });
+    expect(supabase.users).toHaveLength(0);
   });
 });
 
@@ -293,5 +352,107 @@ describe("preview dashboard admin disable mode", () => {
 
     expect(lines.join("\n")).not.toContain("service-role-secret");
     expect(lines.join("\n")).not.toContain("session-token");
+  });
+
+  it("revoke-all updates only active sessions for the exact user", async () => {
+    const calls: Array<{ table: string; payload: Row; eq: [string, string] | null; is: [string, null] | null }> = [];
+    const supabase: PreviewAdminSupabase = {
+      from(table: string) {
+        return {
+          select: () => {
+            throw new Error("select not expected");
+          },
+          insert: () => {
+            throw new Error("insert not expected");
+          },
+          update(payload: Row) {
+            const call = { table, payload, eq: null as [string, string] | null, is: null as [string, null] | null };
+            calls.push(call);
+            return {
+              eq(column: string, value: string) {
+                call.eq = [column, value];
+                return {
+                  is(isColumn: string, isValue: null) {
+                    call.is = [isColumn, isValue];
+                    return Promise.resolve({ error: null });
+                  },
+                  select: () => {
+                    throw new Error("select not expected");
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    await expect(revokePreviewAdminSessionsForUser(supabase, "user-1")).resolves.toEqual({ ok: true });
+    expect(calls).toEqual([
+      {
+        table: "dashboard_sessions",
+        payload: { revoked_at: expect.any(String) },
+        eq: ["user_id", "user-1"],
+        is: ["revoked_at", null],
+      },
+    ]);
+  });
+
+  it("revoke failure returns cleanup failure", async () => {
+    const supabase = makeSupabase(
+      [
+        {
+          id: "user-1",
+          email: "dashboard-auth-test@applywizz.ai",
+          email_normalized: "dashboard-auth-test@applywizz.ai",
+          role: "admin_ceo",
+          status: "active",
+        },
+      ],
+      { failSessionUpdate: true },
+    );
+
+    await expect(
+      disablePreviewAdmin({
+        env: env(),
+        supabase: supabase.client,
+        revokeAllSessionsForUser: (userId) => revokePreviewAdminSessionsForUser(supabase.client, userId),
+      }),
+    ).resolves.toEqual({ ok: false, code: "REVOKE_FAILED" });
+  });
+});
+
+describe("preview dashboard admin CLI", () => {
+  it("rejects --disable --dry-run before creating a client", async () => {
+    const createSupabase = vi.fn();
+    const { logger, lines } = makeLogger();
+
+    const result = await runSeedPreviewAdminCli({
+      args: ["--disable", "--dry-run"],
+      env: env(),
+      createSupabase,
+      logger,
+    });
+
+    expect(result).toEqual({ ok: false, code: "CONFLICTING_FLAGS" });
+    expect(createSupabase).not.toHaveBeenCalled();
+    expect(lines.join("\n")).toContain("failed code=CONFLICTING_FLAGS");
+  });
+
+  it("validation failure does not create a Supabase client", async () => {
+    const createSupabase = vi.fn();
+
+    const result = await runSeedPreviewAdminCli({
+      args: [],
+      env: env({ DASHBOARD_AUTH_SEED_TARGET: "" }),
+      createSupabase,
+    });
+
+    expect(result).toEqual({ ok: false, code: "INVALID_TARGET" });
+    expect(createSupabase).not.toHaveBeenCalled();
+  });
+
+  it("importing the CLI exposes validation without resolving server-only", async () => {
+    expect(typeof runSeedPreviewAdminCli).toBe("function");
   });
 });

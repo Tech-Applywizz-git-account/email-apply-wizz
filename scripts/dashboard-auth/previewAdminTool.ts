@@ -3,13 +3,16 @@ export type PreviewAdminToolErrorCode =
   | "MISSING_EMAIL"
   | "MISSING_PROJECT_REF"
   | "MALFORMED_PROJECT_REF"
+  | "MISSING_PRODUCTION_PROJECT_REF"
+  | "MALFORMED_PRODUCTION_PROJECT_REF"
   | "MISSING_SUPABASE_URL"
   | "MALFORMED_SUPABASE_URL"
   | "PROJECT_REF_MISMATCH"
   | "PRODUCTION_PROJECT_REF"
   | "DB_READ_FAILED"
   | "DB_WRITE_FAILED"
-  | "REVOKE_FAILED";
+  | "REVOKE_FAILED"
+  | "CONFLICTING_FLAGS";
 
 export type PreviewAdminToolResult =
   | {
@@ -23,6 +26,15 @@ export type PreviewAdminToolResult =
       ok: true;
       mode: "disable";
       action: "disabled" | "already_disabled" | "missing";
+      normalizedEmail: string;
+      projectRef: string;
+    }
+  | { ok: false; code: PreviewAdminToolErrorCode };
+
+export type PreviewAdminSessionCleanupResult =
+  | {
+      ok: true;
+      action: "revoked" | "missing";
       normalizedEmail: string;
       projectRef: string;
     }
@@ -45,6 +57,7 @@ export interface PreviewAdminSupabase {
     };
     update(row: Row): {
       eq(column: string, value: string): {
+        is(column: string, value: null): PromiseLike<{ error: { message: string } | null }>;
         select(columns: string): {
           maybeSingle(): QueryResult<{ id: string }>;
         };
@@ -67,7 +80,7 @@ interface PreviewAdminParams {
 }
 
 interface DisablePreviewAdminParams extends PreviewAdminParams {
-  revokeAllSessionsForUser: RevokeAllSessionsForUser;
+  revokeAllSessionsForUser?: RevokeAllSessionsForUser;
 }
 
 interface ValidatedConfig {
@@ -99,7 +112,9 @@ export function resolveSupabaseProjectRef(supabaseUrl: string | undefined): stri
   }
 }
 
-function validatePreviewConfig(env: NodeJS.ProcessEnv): { ok: true; config: ValidatedConfig } | { ok: false; code: PreviewAdminToolErrorCode } {
+export function validatePreviewAdminConfig(
+  env: NodeJS.ProcessEnv,
+): { ok: true; config: ValidatedConfig } | { ok: false; code: PreviewAdminToolErrorCode } {
   if (env.DASHBOARD_AUTH_SEED_TARGET !== "preview") return { ok: false, code: "INVALID_TARGET" };
 
   const normalizedEmail = normalizePreviewAdminEmail(env.DASHBOARD_TEST_ADMIN_EMAIL ?? "");
@@ -114,13 +129,57 @@ function validatePreviewConfig(env: NodeJS.ProcessEnv): { ok: true; config: Vali
   if (!resolvedRef) return { ok: false, code: "MALFORMED_SUPABASE_URL" };
 
   const productionRef = env.DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF?.trim() ?? "";
-  if (productionRef && (!PROJECT_REF_PATTERN.test(productionRef) || expectedRef === productionRef || resolvedRef === productionRef)) {
-    return { ok: false, code: "PRODUCTION_PROJECT_REF" };
-  }
+  if (!productionRef) return { ok: false, code: "MISSING_PRODUCTION_PROJECT_REF" };
+  if (!PROJECT_REF_PATTERN.test(productionRef)) return { ok: false, code: "MALFORMED_PRODUCTION_PROJECT_REF" };
+  if (expectedRef === productionRef || resolvedRef === productionRef) return { ok: false, code: "PRODUCTION_PROJECT_REF" };
 
   if (resolvedRef !== expectedRef) return { ok: false, code: "PROJECT_REF_MISMATCH" };
 
   return { ok: true, config: { normalizedEmail, projectRef: expectedRef } };
+}
+
+export async function revokePreviewAdminSessionsForUser(
+  supabase: PreviewAdminSupabase,
+  userId: string,
+  now = new Date(),
+): Promise<{ ok: true } | { ok: false }> {
+  if (!userId.trim()) return { ok: false };
+
+  const result = await supabase
+    .from("dashboard_sessions")
+    .update({ revoked_at: now.toISOString() })
+    .eq("user_id", userId)
+    .is("revoked_at", null);
+
+  return result.error ? { ok: false } : { ok: true };
+}
+
+export async function revokePreviewAdminSessionsForEmail(
+  params: PreviewAdminParams,
+): Promise<PreviewAdminSessionCleanupResult> {
+  const validated = validatePreviewAdminConfig(params.env);
+  if (!validated.ok) return validated;
+
+  const { normalizedEmail, projectRef } = validated.config;
+  const existing = await findUserByEmail(params.supabase, normalizedEmail);
+  if (existing.error) return { ok: false, code: "DB_READ_FAILED" };
+
+  if (!existing.data) {
+    return { ok: true, action: "missing", normalizedEmail, projectRef };
+  }
+
+  const userId = String(existing.data.id ?? "");
+  if (!userId) return { ok: false, code: "DB_READ_FAILED" };
+
+  const revoked = await revokePreviewAdminSessionsForUser(params.supabase, userId);
+  if (!revoked.ok) return { ok: false, code: "REVOKE_FAILED" };
+
+  return {
+    ok: true,
+    action: "revoked",
+    normalizedEmail,
+    projectRef,
+  };
 }
 
 async function findUserByEmail(supabase: PreviewAdminSupabase, normalizedEmail: string): QueryResult<Row> {
@@ -148,7 +207,7 @@ function logSuccess(
 export async function seedPreviewAdmin(
   params: PreviewAdminParams & { dryRun?: boolean },
 ): Promise<PreviewAdminToolResult> {
-  const validated = validatePreviewConfig(params.env);
+  const validated = validatePreviewAdminConfig(params.env);
   if (!validated.ok) return validated;
 
   const { normalizedEmail, projectRef } = validated.config;
@@ -198,7 +257,7 @@ export async function seedPreviewAdmin(
 }
 
 export async function disablePreviewAdmin(params: DisablePreviewAdminParams): Promise<PreviewAdminToolResult> {
-  const validated = validatePreviewConfig(params.env);
+  const validated = validatePreviewAdminConfig(params.env);
   if (!validated.ok) return validated;
 
   const { normalizedEmail, projectRef } = validated.config;
@@ -227,7 +286,7 @@ export async function disablePreviewAdmin(params: DisablePreviewAdminParams): Pr
     action = "disabled";
   }
 
-  const revoked = await params.revokeAllSessionsForUser(userId);
+  const revoked = await (params.revokeAllSessionsForUser ?? ((targetUserId) => revokePreviewAdminSessionsForUser(params.supabase, targetUserId)))(userId);
   if (!revoked.ok) return { ok: false, code: "REVOKE_FAILED" };
 
   const result: PreviewAdminToolResult = { ok: true, mode: "disable", action, normalizedEmail, projectRef };

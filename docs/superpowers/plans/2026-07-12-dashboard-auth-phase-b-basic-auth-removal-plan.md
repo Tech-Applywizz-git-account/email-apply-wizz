@@ -197,14 +197,16 @@ Use a reviewed **one-off operator script**, not raw SQL. Production bootstrap mu
 Required safety behavior:
 
 - [ ] Require `DASHBOARD_AUTH_SEED_TARGET=preview` to run at all.
-- [ ] Require the resolved `NEXT_PUBLIC_SUPABASE_URL` to match an explicitly allowlisted Preview project reference (URL-substring allowlist), so pointing the script at production env vars fails even with the flag set.
+- [ ] Require `DASHBOARD_PREVIEW_SUPABASE_PROJECT_REF` and `DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF`; both must be valid Supabase project refs and must differ.
+- [ ] Require the project ref resolved from `NEXT_PUBLIC_SUPABASE_URL` to exactly equal `DASHBOARD_PREVIEW_SUPABASE_PROJECT_REF` and not equal `DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF`, so pointing the script at production env vars fails even with the flag set.
 - [ ] Refuse to run if the URL resembles or equals the production project.
 - [ ] Read the test email from `DASHBOARD_TEST_ADMIN_EMAIL` (env var or CLI argument). Never hardcode a personal email.
 - [ ] Normalize the email and upsert by `email_normalized`.
 - [ ] Set: `role = 'admin_ceo'`, `status = 'active'`, `totp_enabled = false`, `totp_secret_encrypted = null`.
 - [ ] Be idempotent — duplicate runs must not create multiple users for the same email.
 - [ ] Output only: the normalized email and a created/updated status. Never print secrets, tokens, recovery codes, or encrypted TOTP values.
-- [ ] Support a companion `--disable` mode: set the user's status to `disabled` and revoke all sessions for that user (`revokeDashboardSessionsForUser(userId)` or an equivalent reviewed service-role update).
+- [ ] Support a companion `--disable` mode: set the user's status to `disabled` and revoke all active sessions for that user with a reviewed service-role update scoped by exact `user_id` and `revoked_at is null`; do not import the server-only session store in CLI execution paths.
+- [ ] Reject ambiguous mode combinations such as `--disable --dry-run` before creating a Supabase client.
 - [ ] Preserve audit evidence — never delete audit rows.
 - [ ] Require independent code review before first execution against any database.
 
@@ -223,7 +225,9 @@ Phase B1 E2E is **local and operator-assisted, not fully unattended CI**:
 - TOTP setup codes are computed programmatically from the setup secret displayed during enrollment, using the same reference TOTP implementation already used in existing tests.
 - Do not add Microsoft Graph mailbox-read automation in Phase B1.
 - Automated Graph OTP retrieval may be considered later only if this E2E becomes recurring.
-- The test command must require `DASHBOARD_AUTH_E2E_TARGET=preview` and must refuse to run if the URL is the production alias.
+- The test command must require both `DASHBOARD_AUTH_E2E_TARGET=preview` and `DASHBOARD_AUTH_SEED_TARGET=preview`, because mandatory cleanup uses the same Preview-only disable path.
+- The test command must require `DASHBOARD_PREVIEW_SUPABASE_PROJECT_REF` and `DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF`, must verify they differ, and must refuse to run if the resolved Supabase URL points at the production ref.
+- The test command must refuse to run if the URL is the production alias or a deceptive production-like hostname.
 
 ### Test Data Setup
 

@@ -41,7 +41,7 @@ Current slice:
 - Blocking findings: none
 - Basic Auth remains active.
 - Phase B planning is approved through revised plan commit f9fb3cb08f65a9eefdb38edc360b44142d853861.
-- Phase B1 tooling preparation is in progress.
+- Phase B1 tooling preparation fixes are implemented locally after independent review.
 - Phase B Basic Auth removal has not started and remains blocked pending Preview setup, real database-backed E2E evidence, and independent review.
 - No production changes have occurred.
 - No deployment has occurred.
@@ -59,7 +59,14 @@ Phase B plan review status:
 - Owner approved creating and using a dedicated non-production Preview Supabase project for Phase B1.
 - Owner approved the Preview OTP mailbox direction: use a dedicated company-owned mailbox such as `dashboard-auth-test@applywizz.ai`.
 - Mailbox creation and Microsoft Graph OTP receipt verification remain operational prerequisites until the owner confirms them.
-- Phase B1 tooling status: IMPLEMENTED — PENDING INDEPENDENT REVIEW AND OWNER INFRASTRUCTURE SETUP.
+- Phase B1 tooling review verdict: CHANGES REQUIRED.
+- Review blocking findings:
+  1. CLI/E2E execution imported the server-only session store path.
+  2. E2E soft navigation targeted a non-existent Mailboxes navigation link.
+  3. E2E startup did not require `DASHBOARD_AUTH_SEED_TARGET=preview` before cleanup.
+  4. `--disable --dry-run` was ambiguous and not rejected.
+  5. Production Supabase project reference was optional instead of mandatory.
+- Phase B1 tooling status: FIX IMPLEMENTED — PENDING DIFF RE-REVIEW.
 - No Supabase project, seed, environment, push, or deployment changes have occurred.
 
 Current rules:
@@ -90,10 +97,10 @@ Slice 11 non-blocking observations:
 - Production rollout still requires DASHBOARD_TOTP_ENCRYPTION_KEY, DASHBOARD_LOGIN_CHALLENGE_SECRET, seeded dashboard_users, and completion/review of the middleware/session-switch slice.
 
 Next expected human-approved task:
-- Independent review of Phase B1 tooling before first execution, Supabase project creation, Vercel env changes, user seeding, Preview E2E execution, push, or deploy.
+- Independent diff re-review of Phase B1 tooling fixes before first execution, Supabase project creation, Vercel env changes, user seeding, Preview E2E execution, push, or deploy.
 
 Last run:
-- 2026-07-12: Phase B1 Preview seed/cleanup tooling and local operator-assisted E2E harness implemented locally; not executed; pending independent review and owner infrastructure setup.
+- 2026-07-12: Phase B1 tooling fixes implemented locally for five blocking review findings; tooling remains unexecuted and pending independent diff re-review.
 
 Slice 12 Phase A implementation summary:
 - Added server-only requireDashboardSession guard using the reviewed getDashboardSessionByToken helper.
@@ -139,13 +146,15 @@ Phase B prerequisites:
 
 Phase B1 tooling summary:
 - Preview-only seed/disable tool added for a dedicated test `admin_ceo` dashboard user.
-- Tooling requires `DASHBOARD_AUTH_SEED_TARGET=preview`, `DASHBOARD_TEST_ADMIN_EMAIL`, and `DASHBOARD_PREVIEW_SUPABASE_PROJECT_REF`.
-- Tooling resolves the Supabase project reference from `NEXT_PUBLIC_SUPABASE_URL` and refuses mismatches or the explicit production project reference.
-- Disable mode marks the Preview test user disabled and revokes sessions using reviewed session-store cleanup behavior.
+- Tooling requires `DASHBOARD_AUTH_SEED_TARGET=preview`, `DASHBOARD_TEST_ADMIN_EMAIL`, `DASHBOARD_PREVIEW_SUPABASE_PROJECT_REF`, and `DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF`.
+- Tooling resolves the Supabase project reference from `NEXT_PUBLIC_SUPABASE_URL` and refuses missing/malformed/equal Preview and production refs, production ref matches, and mismatches.
+- Disable mode marks the Preview test user disabled and revokes active sessions through an injected service-role update scoped to the exact Preview test user ID; CLI paths do not import the server-only session store.
+- `--disable --dry-run` is rejected before Supabase client creation.
+- Local operator-assisted Preview E2E requires both Preview target flags, checks Basic Auth before launching Chromium, revokes sessions by Preview test user before soft navigation, and uses the existing Clients navigation link.
 - Local operator-assisted Preview E2E harness is prepared but has not been executed.
-- Focused tooling tests: 2 files / 17 tests passed.
-- DashboardAuth tests: 18 files / 132 tests passed.
-- Full Vitest: 58 files / 494 tests passed.
+- Focused tooling tests: 2 files / 39 tests passed.
+- DashboardAuth tests: 18 files / 154 tests passed.
+- Full Vitest: 58 files / 516 tests passed.
 - Lint passed.
 - Build passed with existing Next.js middleware deprecation warning.
 - git diff --check passed.

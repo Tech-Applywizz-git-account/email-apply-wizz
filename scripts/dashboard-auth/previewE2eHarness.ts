@@ -1,25 +1,30 @@
 import { createHmac } from "node:crypto";
-import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { createInterface } from "node:readline/promises";
 
 import {
   disablePreviewAdmin,
   normalizePreviewAdminEmail,
   resolveSupabaseProjectRef,
+  revokePreviewAdminSessionsForEmail,
   type PreviewAdminSupabase,
 } from "./previewAdminTool";
 
 export type PreviewE2eGuardCode =
   | "INVALID_TARGET"
+  | "INVALID_SEED_TARGET"
   | "MISSING_PREVIEW_URL"
   | "MALFORMED_PREVIEW_URL"
   | "PRODUCTION_URL"
   | "MISSING_EMAIL"
   | "MISSING_PROJECT_REF"
   | "MALFORMED_PROJECT_REF"
+  | "MISSING_PRODUCTION_PROJECT_REF"
+  | "MALFORMED_PRODUCTION_PROJECT_REF"
   | "MISSING_SUPABASE_URL"
   | "MALFORMED_SUPABASE_URL"
   | "PROJECT_REF_MISMATCH"
+  | "PRODUCTION_PROJECT_REF"
   | "MISSING_SERVICE_ROLE_KEY"
   | "MISSING_BASIC_AUTH_SECRET";
 
@@ -30,35 +35,56 @@ export type PreviewE2eGuardResult =
         previewUrl: string;
         normalizedEmail: string;
         projectRef: string;
+        productionProjectRef: string;
         basicAuthSecret: string;
       };
     }
   | { ok: false; code: PreviewE2eGuardCode };
 
-type SessionLookup =
-  | {
-      ok: true;
-      session: {
-        id: string;
-      };
-    }
-  | { ok: false };
+type PreviewBrowser = {
+  newContext(options: { httpCredentials: { username: string; password: string } }): Promise<PreviewBrowserContext>;
+  close(): Promise<void>;
+};
 
-interface SessionMutationSupabase {
-  from(table: string): {
-    update(row: Record<string, unknown>): {
-      eq(column: string, value: string): PromiseLike<{ error: { message: string } | null }>;
-    };
-  };
+type PreviewBrowserContext = {
+  newPage(): Promise<PreviewPage>;
+  close(): Promise<void>;
+};
+
+type PreviewLocator = {
+  fill(value: string): Promise<void>;
+  click(): Promise<void>;
+  isVisible(): Promise<boolean>;
+  textContent(): Promise<string | null>;
+  waitFor(): Promise<void>;
+};
+
+type PreviewPage = {
+  goto(url: string): Promise<unknown>;
+  getByTestId(testId: string): PreviewLocator;
+  getByRole(role: string, options: { name: string }): PreviewLocator;
+  getByText(text: string): { first(): PreviewLocator };
+  waitForURL(url: string): Promise<void>;
+  evaluate<T>(callback: () => Promise<T>): Promise<T>;
+};
+
+export interface PreviewE2eHarnessDeps {
+  launchBrowser?: () => Promise<PreviewBrowser>;
+  createSupabase?: () => PreviewAdminSupabase;
+  promptForOtp?: (prompt: string) => Promise<string>;
+  fetch?: typeof fetch;
+  revokeSessionsForEmail?: (params: { env: NodeJS.ProcessEnv; supabase: PreviewAdminSupabase }) => Promise<{ ok: boolean }>;
+  disableAdmin?: (params: { env: NodeJS.ProcessEnv; supabase: PreviewAdminSupabase }) => Promise<{ ok: boolean }>;
 }
 
 const PROJECT_REF_PATTERN = /^[a-z0-9]{20}$/;
 const PRODUCTION_HOSTS = new Set(["email-apply-wizz.vercel.app"]);
+export const PREVIEW_E2E_SOFT_NAV_LINK = "Clients";
 
 function isProductionPreviewUrl(value: string): boolean {
   try {
     const hostname = new URL(value).hostname.toLowerCase();
-    return PRODUCTION_HOSTS.has(hostname);
+    return PRODUCTION_HOSTS.has(hostname) || hostname.includes("email-apply-wizz.vercel.app");
   } catch {
     return false;
   }
@@ -66,6 +92,7 @@ function isProductionPreviewUrl(value: string): boolean {
 
 export function validatePreviewE2eEnvironment(env: NodeJS.ProcessEnv): PreviewE2eGuardResult {
   if (env.DASHBOARD_AUTH_E2E_TARGET !== "preview") return { ok: false, code: "INVALID_TARGET" };
+  if (env.DASHBOARD_AUTH_SEED_TARGET !== "preview") return { ok: false, code: "INVALID_SEED_TARGET" };
 
   const previewUrl = env.DASHBOARD_PREVIEW_URL?.trim() ?? "";
   if (!previewUrl) return { ok: false, code: "MISSING_PREVIEW_URL" };
@@ -83,9 +110,17 @@ export function validatePreviewE2eEnvironment(env: NodeJS.ProcessEnv): PreviewE2
   if (!projectRef) return { ok: false, code: "MISSING_PROJECT_REF" };
   if (!PROJECT_REF_PATTERN.test(projectRef)) return { ok: false, code: "MALFORMED_PROJECT_REF" };
 
+  const productionProjectRef = env.DASHBOARD_PRODUCTION_SUPABASE_PROJECT_REF?.trim() ?? "";
+  if (!productionProjectRef) return { ok: false, code: "MISSING_PRODUCTION_PROJECT_REF" };
+  if (!PROJECT_REF_PATTERN.test(productionProjectRef)) {
+    return { ok: false, code: "MALFORMED_PRODUCTION_PROJECT_REF" };
+  }
+  if (productionProjectRef === projectRef) return { ok: false, code: "PRODUCTION_PROJECT_REF" };
+
   if (!env.NEXT_PUBLIC_SUPABASE_URL?.trim()) return { ok: false, code: "MISSING_SUPABASE_URL" };
   const resolvedRef = resolveSupabaseProjectRef(env.NEXT_PUBLIC_SUPABASE_URL);
   if (!resolvedRef) return { ok: false, code: "MALFORMED_SUPABASE_URL" };
+  if (resolvedRef === productionProjectRef) return { ok: false, code: "PRODUCTION_PROJECT_REF" };
   if (resolvedRef !== projectRef) return { ok: false, code: "PROJECT_REF_MISMATCH" };
 
   if (!env.SUPABASE_SERVICE_ROLE_KEY?.trim()) return { ok: false, code: "MISSING_SERVICE_ROLE_KEY" };
@@ -99,9 +134,14 @@ export function validatePreviewE2eEnvironment(env: NodeJS.ProcessEnv): PreviewE2
       previewUrl,
       normalizedEmail,
       projectRef,
+      productionProjectRef,
       basicAuthSecret,
     },
   };
+}
+
+function originUrl(path: string, baseUrl: string): string {
+  return new URL(path, baseUrl).toString();
 }
 
 function base32Decode(secret: string): Buffer {
@@ -137,7 +177,7 @@ export function generateTotpCodeForPreview(secret: string, now = new Date()): st
   return String(binary % 1_000_000).padStart(6, "0");
 }
 
-async function promptForOtp(prompt: string): Promise<string> {
+async function defaultPromptForOtp(prompt: string): Promise<string> {
   const reader = createInterface({ input, output });
   try {
     return (await reader.question(prompt)).trim();
@@ -146,33 +186,66 @@ async function promptForOtp(prompt: string): Promise<string> {
   }
 }
 
-async function expireCurrentSession(params: {
-  rawToken: string;
-  getSession: (rawToken: string) => Promise<SessionLookup>;
-  supabase: SessionMutationSupabase;
-}): Promise<boolean> {
-  const session = await params.getSession(params.rawToken);
-  if (!session.ok) return false;
-
-  const expiredAt = new Date(Date.now() - 60_000).toISOString();
-  const result = await params.supabase
-    .from("dashboard_sessions")
-    .update({ expires_at: expiredAt })
-    .eq("id", session.session.id);
-
-  return !result.error;
+async function defaultLaunchBrowser(): Promise<PreviewBrowser> {
+  const { chromium } = await import("@playwright/test");
+  return chromium.launch({ headless: false }) as Promise<PreviewBrowser>;
 }
 
-export async function runPreviewDashboardAuthE2E(env: NodeJS.ProcessEnv = process.env): Promise<{ ok: true } | { ok: false; code: string }> {
+async function defaultCreateSupabase(): Promise<PreviewAdminSupabase> {
+  const { createSupabaseServiceRoleClient } = await import("@/lib/supabase/serviceRole");
+  return createSupabaseServiceRoleClient() as unknown as PreviewAdminSupabase;
+}
+
+async function confirmBasicAuthGate(params: {
+  fetchImpl: typeof fetch;
+  previewUrl: string;
+}): Promise<boolean> {
+  const unauthenticated = await params.fetchImpl(originUrl("/dashboard/login", params.previewUrl), { redirect: "manual" });
+  return unauthenticated.status === 401;
+}
+
+async function authenticatePreviewSession(params: {
+  page: PreviewPage;
+  previewUrl: string;
+  email: string;
+  promptForOtp: (prompt: string) => Promise<string>;
+}): Promise<void> {
+  await params.page.goto(originUrl("/dashboard/login", params.previewUrl));
+  await params.page.getByTestId("dashboard-auth-email").fill(params.email);
+  await params.page.getByRole("button", { name: "Send OTP" }).click();
+
+  const otp = await params.promptForOtp("Enter the email OTP shown in the dedicated Preview test mailbox: ");
+  await params.page.getByTestId("dashboard-auth-otp").fill(otp);
+  await params.page.getByRole("button", { name: "Continue" }).click();
+
+  const setupSecret = params.page.getByTestId("dashboard-auth-totp-secret");
+  if (await setupSecret.isVisible().catch(() => false)) {
+    const secret = (await setupSecret.textContent())?.trim() ?? "";
+    const code = generateTotpCodeForPreview(secret);
+    await params.page.getByTestId("dashboard-auth-setup-code").fill(code);
+    await params.page.getByRole("button", { name: "Complete setup" }).click();
+  } else {
+    const code = await params.promptForOtp("Enter the authenticator code for the Preview test user: ");
+    await params.page.getByTestId("dashboard-auth-login-code").fill(code);
+    await params.page.getByRole("button", { name: "Sign in" }).click();
+  }
+
+  await params.page.waitForURL(originUrl("/overview", params.previewUrl));
+}
+
+export async function runPreviewDashboardAuthE2EWithDeps(
+  env: NodeJS.ProcessEnv = process.env,
+  deps: PreviewE2eHarnessDeps = {},
+): Promise<{ ok: true } | { ok: false; code: string }> {
   const guard = validatePreviewE2eEnvironment(env);
   if (!guard.ok) return guard;
 
-  const { chromium } = await import("@playwright/test");
-  const { createSupabaseServiceRoleClient } = await import("@/lib/supabase/serviceRole");
-  const { getDashboardSessionByToken, revokeDashboardSessionsForUser } = await import("@/lib/dashboardAuth/sessionStore");
+  const fetchImpl = deps.fetch ?? fetch;
+  const basicAuthConfirmed = await confirmBasicAuthGate({ fetchImpl, previewUrl: guard.config.previewUrl });
+  if (!basicAuthConfirmed) return { ok: false, code: "BASIC_AUTH_GATE_NOT_CONFIRMED" };
 
-  const supabase = createSupabaseServiceRoleClient() as unknown as PreviewAdminSupabase & SessionMutationSupabase;
-  const browser = await chromium.launch({ headless: false });
+  const supabase = deps.createSupabase ? deps.createSupabase() : await defaultCreateSupabase();
+  const browser = await (deps.launchBrowser ?? defaultLaunchBrowser)();
   const context = await browser.newContext({
     httpCredentials: {
       username: "admin",
@@ -180,61 +253,39 @@ export async function runPreviewDashboardAuthE2E(env: NodeJS.ProcessEnv = proces
     },
   });
   const page = await context.newPage();
+  const promptForOtp = deps.promptForOtp ?? defaultPromptForOtp;
+  const revokeSessionsForEmail =
+    deps.revokeSessionsForEmail ??
+    ((params: { env: NodeJS.ProcessEnv; supabase: PreviewAdminSupabase }) => revokePreviewAdminSessionsForEmail(params));
+  const disableAdmin =
+    deps.disableAdmin ??
+    ((params: { env: NodeJS.ProcessEnv; supabase: PreviewAdminSupabase }) => disablePreviewAdmin(params));
   let cleanupOk = false;
 
   try {
-    const unauthenticated = await fetch(new URL("/dashboard/login", guard.config.previewUrl), { redirect: "manual" });
-    if (unauthenticated.status !== 401) return { ok: false, code: "BASIC_AUTH_GATE_NOT_CONFIRMED" };
-
-    await page.goto(new URL("/dashboard/login", guard.config.previewUrl).toString());
-    await page.getByTestId("dashboard-auth-email").fill(guard.config.normalizedEmail);
-    await page.getByRole("button", { name: "Send OTP" }).click();
-
-    const otp = await promptForOtp("Enter the email OTP shown in the dedicated Preview test mailbox: ");
-    await page.getByTestId("dashboard-auth-otp").fill(otp);
-    await page.getByRole("button", { name: "Continue" }).click();
-
-    const setupSecret = page.getByTestId("dashboard-auth-totp-secret");
-    if (await setupSecret.isVisible().catch(() => false)) {
-      const secret = (await setupSecret.textContent())?.trim() ?? "";
-      const code = generateTotpCodeForPreview(secret);
-      await page.getByTestId("dashboard-auth-setup-code").fill(code);
-      await page.getByRole("button", { name: "Complete setup" }).click();
-    } else {
-      const code = await promptForOtp("Enter the authenticator code for the Preview test user: ");
-      await page.getByTestId("dashboard-auth-login-code").fill(code);
-      await page.getByRole("button", { name: "Sign in" }).click();
-    }
-
-    await page.waitForURL("**/overview");
-    await page.goto(new URL("/dashboard", guard.config.previewUrl).toString());
-    await page.getByText("Email Tracker Dashboard").first().waitFor();
-    await page.goto(new URL("/applications", guard.config.previewUrl).toString());
-
-    const cookies = await context.cookies(guard.config.previewUrl);
-    const sessionCookie = cookies.find((cookie) => cookie.name === "dashboard_session");
-    if (!sessionCookie?.value) return { ok: false, code: "MISSING_SESSION_COOKIE" };
-
-    const expired = await expireCurrentSession({
-      rawToken: sessionCookie.value,
-      getSession: getDashboardSessionByToken,
-      supabase,
+    await authenticatePreviewSession({
+      page,
+      previewUrl: guard.config.previewUrl,
+      email: guard.config.normalizedEmail,
+      promptForOtp,
     });
-    if (!expired) return { ok: false, code: "SESSION_EXPIRY_FAILED" };
 
-    await page.getByRole("link", { name: "Mailboxes" }).click();
-    await page.waitForURL("**/dashboard/login");
+    await page.goto(originUrl("/dashboard", guard.config.previewUrl));
+    await page.getByText("Email Tracker Dashboard").first().waitFor();
+    await page.goto(originUrl("/applications", guard.config.previewUrl));
 
-    await page.goto(new URL("/dashboard/login", guard.config.previewUrl).toString());
-    await page.getByTestId("dashboard-auth-email").fill(guard.config.normalizedEmail);
-    await page.getByRole("button", { name: "Send OTP" }).click();
-    const secondOtp = await promptForOtp("Enter the second email OTP shown in the dedicated Preview test mailbox: ");
-    await page.getByTestId("dashboard-auth-otp").fill(secondOtp);
-    await page.getByRole("button", { name: "Continue" }).click();
-    const loginCode = await promptForOtp("Enter the authenticator code for logout verification: ");
-    await page.getByTestId("dashboard-auth-login-code").fill(loginCode);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await page.waitForURL("**/overview");
+    const revoked = await revokeSessionsForEmail({ env, supabase });
+    if (!revoked.ok) return { ok: false, code: "SESSION_REVOKE_FAILED" };
+
+    await page.getByRole("link", { name: PREVIEW_E2E_SOFT_NAV_LINK }).click();
+    await page.waitForURL(originUrl("/dashboard/login", guard.config.previewUrl));
+
+    await authenticatePreviewSession({
+      page,
+      previewUrl: guard.config.previewUrl,
+      email: guard.config.normalizedEmail,
+      promptForOtp,
+    });
 
     const logoutOk = await page.evaluate(async () => {
       const response = await fetch("/api/dashboard/auth/logout", { method: "POST" });
@@ -242,27 +293,26 @@ export async function runPreviewDashboardAuthE2E(env: NodeJS.ProcessEnv = proces
     });
     if (!logoutOk) return { ok: false, code: "LOGOUT_FAILED" };
 
-    await page.goto(new URL("/overview", guard.config.previewUrl).toString());
-    await page.waitForURL("**/dashboard/login");
+    await page.goto(originUrl("/overview", guard.config.previewUrl));
+    await page.waitForURL(originUrl("/dashboard/login", guard.config.previewUrl));
 
-    const cleanup = await disablePreviewAdmin({
-      env,
-      supabase,
-      revokeAllSessionsForUser: revokeDashboardSessionsForUser,
-    });
+    const cleanup = await disableAdmin({ env, supabase });
     cleanupOk = cleanup.ok;
     if (!cleanup.ok) return { ok: false, code: "CLEANUP_FAILED" };
 
     return { ok: true };
   } finally {
     if (!cleanupOk) {
-      await disablePreviewAdmin({
-        env,
-        supabase,
-        revokeAllSessionsForUser: revokeDashboardSessionsForUser,
-      }).catch(() => undefined);
+      const cleanup = await disableAdmin({ env, supabase }).catch(() => ({ ok: false }));
+      if (!cleanup.ok) cleanupOk = false;
     }
     await context.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
   }
+}
+
+export function runPreviewDashboardAuthE2E(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ ok: true } | { ok: false; code: string }> {
+  return runPreviewDashboardAuthE2EWithDeps(env);
 }
