@@ -32,10 +32,13 @@ Completed and reviewed:
 
 Current slice:
 - Slice 12 Phase A implemented: dashboard-session authorization layer underneath retained Basic Auth
-- Status: IMPLEMENTED — PENDING INDEPENDENT REVIEW
+- Status: PASS
 - Approved plan commit: 29b31e9081d74d5631f735c97c14232ea626fbe6
 - Pre-work HEAD: 29b31e9081d74d5631f735c97c14232ea626fbe6
-- Implementation commit: reported in the final implementation report after commit creation to avoid a self-referential log amend cycle
+- Implementation commit: c20863990b2b926ac68e1232934034f943593843
+- Independent reviewer verdict: APPROVED
+- Reviewer: Claude/Fable independent code and security review
+- Blocking findings: none
 - Basic Auth remains active.
 - Phase B remains unimplemented and blocked.
 - No push or deployment has occurred.
@@ -68,10 +71,10 @@ Slice 11 non-blocking observations:
 - Production rollout still requires DASHBOARD_TOTP_ENCRYPTION_KEY, DASHBOARD_LOGIN_CHALLENGE_SECRET, seeded dashboard_users, and completion/review of the middleware/session-switch slice.
 
 Next expected human-approved task:
-- Claude/Fable independent code review of Slice 12 Phase A before any push, deploy, or Phase B work.
+- Checkpoint push of worker-preflight after Slice 12 Phase A documentation closure; no deploy.
 
 Last run:
-- 2026-07-12: Slice 12 Phase A implemented locally; pending independent review
+- 2026-07-12: Slice 12 Phase A marked PASS from Claude/Fable APPROVED verdict; documentation closure only
 
 Slice 12 Phase A implementation summary:
 - Added server-only requireDashboardSession guard using the reviewed getDashboardSessionByToken helper.
@@ -90,10 +93,22 @@ Slice 12 Phase A verification evidence:
 - Dashboard auth API tests: 7 files / 85 tests passed
 - Login-page unit tests: 1 file / 9 tests passed
 - DashboardAuth lib tests: 16 files / 115 tests passed
-- Full Vitest: 56 files / 476 tests passed
+- Full Vitest: 56 files / 477 tests passed
 - Playwright dashboard-auth desktop: 13/13 passed
 - Lint passed
 - Build passed with existing Next.js middleware deprecation warning
+- git diff --check passed
+
+Slice 12 Phase A non-blocking observations:
+- logoutBusyRef is not reset after fetch failure, but the current hard navigation in finally prevents a persistent lock.
+- Origin: null fails closed.
+- Some guard failure-case labels reuse the same { ok: false } mocked path, while detailed distinctions remain covered by getDashboardSessionByToken() tests.
+- Static route-guard coverage is a regression tripwire, not a substitute for the deferred real database-backed E2E.
+
+Phase B prerequisites:
+- Real database-backed valid-session E2E must revoke or expire a real valid session, then soft-navigate to another protected route and confirm denial.
+- Real database-backed valid-session E2E must authenticate with a real valid session and confirm /dashboard renders the Email Tracker business UI.
+- Phase B remains unimplemented and requires a separate approved plan before Basic Auth removal.
 
 Loop readiness audit:
 - 100/100 (L3), report-only safe start
