@@ -1,7 +1,7 @@
 import { IconClients, IconMail, IconRefresh, IconWarning } from "@/components/icons";
-import { EmptyState, MetricCard, SectionBlock } from "@/components/coo";
+import { CooBadge, EmptyState, MetricCard, SectionBlock } from "@/components/coo";
 import { requireDashboardSession } from "@/lib/dashboardAuth/requireDashboardSession";
-import { getEmailArrivalMonitorData, formatIstTime } from "@/lib/zoho/emailArrival";
+import { getEmailArrivalMonitorData, getRecentEmailActivity, formatIstTime } from "@/lib/zoho/emailArrival";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -9,7 +9,13 @@ export const revalidate = 0;
 export default async function EmailArrivalMonitorPage() {
   await requireDashboardSession();
 
+  // NOTE: this page intentionally has TWO separate data sources (temporary — do not
+  // unify in Step 3):
+  //   1. The mailbox daily summary below uses the Leads API (getEmailArrivalMonitorData).
+  //   2. The "Recent Email Activity" per-email table uses the Supabase `clients`
+  //      relation (getRecentEmailActivity).
   const result = await getEmailArrivalMonitorData();
+  const recent = await getRecentEmailActivity();
 
   return (
     <main className="coo-page coo-live-monitor-page">
@@ -95,6 +101,55 @@ export default async function EmailArrivalMonitorPage() {
           </SectionBlock>
         </>
       )}
+
+      {/* Section 2: per-email activity sourced from the Supabase `clients` relation. */}
+      <SectionBlock title="Recent Email Activity">
+        <div className="coo-table-card">
+          {!recent.ok ? (
+            <EmptyState title="Recent activity unavailable." description="Please refresh again in a moment." />
+          ) : recent.rows.length === 0 ? (
+            <EmptyState title="No email activity found" description="No emails have been ingested yet." />
+          ) : (
+            <table className="coo-table">
+              <thead>
+                <tr>
+                  <th>Received</th>
+                  <th>Sender</th>
+                  <th>Subject</th>
+                  <th>Client</th>
+                  <th>Client mailbox</th>
+                  <th>Assigned CA</th>
+                  <th>Category</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.rows.map((row) => (
+                  <tr key={row.id}>
+                    <td>{formatIstTime(row.receivedAt)}</td>
+                    <td>{row.sender ?? "—"}</td>
+                    <td>{row.subject ?? "—"}</td>
+                    <td>{row.clientName ?? "—"}</td>
+                    <td>{row.originalRecipient ?? "—"}</td>
+                    <td>
+                      {row.assignedCaName ? (
+                        <div className="coo-cell-stack">
+                          <span>{row.assignedCaName}</span>
+                          {row.assignedCaEmail ? <span className="coo-cell-subtext">{row.assignedCaEmail}</span> : null}
+                        </div>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>{row.category ?? "—"}</td>
+                    <td>{row.classificationStatus ? <CooBadge label={row.classificationStatus} /> : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </SectionBlock>
     </main>
   );
 }
