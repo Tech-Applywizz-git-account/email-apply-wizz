@@ -27,6 +27,99 @@ export interface EmailArrivalMonitorData {
   activeMailboxesToday: number;
 }
 
+// ── Recent Email Activity (Live Monitor V1 per-email view) ──────────────────────
+// Intentionally a SEPARATE data source from the mailbox summary above: the summary
+// derives client/CA from the Leads API (getLeadByEmail), while this per-email view
+// derives client/CA from the Supabase `clients` relation (FK zoho_email_metadata
+// .client_id → clients.id). The two are deliberately not unified in Step 3.
+
+export interface LiveMonitorEmailRow {
+  id: string;
+  sender: string | null;
+  subject: string | null;
+  originalRecipient: string | null;
+  receivedAt: string | null;
+  classificationStatus: string | null;
+  category: string | null;
+  clientId: string | null;
+  clientName: string | null;
+  assignedCaName: string | null;
+  assignedCaEmail: string | null;
+}
+
+export type GetRecentEmailActivityResult = { ok: true; rows: LiveMonitorEmailRow[] } | { ok: false };
+
+const RECENT_ACTIVITY_LIMIT = 50;
+
+// Narrow local types: this repo has no generated Supabase types, and the embedded
+// `clients` relation is not in any global type, so we type only the columns we read.
+interface RecentEmailClientRelation {
+  client_name: string | null;
+  assigned_ca_name: string | null;
+  assigned_ca_email: string | null;
+}
+
+interface RecentEmailQueryRow {
+  id: string;
+  sender: string | null;
+  subject: string | null;
+  original_recipient: string | null;
+  received_at: string | null;
+  classification_status: string | null;
+  category: string | null;
+  client_id: string | null;
+  clients: RecentEmailClientRelation | RecentEmailClientRelation[] | null;
+}
+
+interface RecentActivitySupabase {
+  from(table: string): {
+    select(columns: string): {
+      order(column: string, options: { ascending: boolean }): {
+        limit(count: number): Promise<{ data: RecentEmailQueryRow[] | null; error: { message: string } | null }>;
+      };
+    };
+  };
+}
+
+export async function getRecentEmailActivity(): Promise<GetRecentEmailActivityResult> {
+  try {
+    const supabase = createSupabaseServiceRoleClient() as unknown as RecentActivitySupabase;
+
+    // Read-only. Left-joins the `clients` relation so unmapped rows (client is null)
+    // remain visible. Never selects message body/content.
+    const { data, error } = await supabase
+      .from("zoho_email_metadata")
+      .select(
+        "id, sender, subject, original_recipient, received_at, classification_status, category, client_id, clients(client_name, assigned_ca_name, assigned_ca_email)",
+      )
+      .order("received_at", { ascending: false })
+      .limit(RECENT_ACTIVITY_LIMIT);
+
+    if (error || !data) return { ok: false };
+
+    const rows: LiveMonitorEmailRow[] = data.map((row) => {
+      const relation = Array.isArray(row.clients) ? (row.clients[0] ?? null) : row.clients;
+      return {
+        id: String(row.id),
+        sender: row.sender ?? null,
+        subject: row.subject ?? null,
+        originalRecipient: row.original_recipient ?? null,
+        receivedAt: row.received_at ?? null,
+        classificationStatus: row.classification_status ?? null,
+        category: row.category ?? null,
+        clientId: row.client_id ?? null,
+        clientName: relation?.client_name ?? null,
+        assignedCaName: relation?.assigned_ca_name ?? null,
+        assignedCaEmail: relation?.assigned_ca_email ?? null,
+      };
+    });
+
+    return { ok: true, rows };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export type GetEmailArrivalMonitorResult = { ok: true; data: EmailArrivalMonitorData } | { ok: false };
 
 interface SupabaseQuery {
