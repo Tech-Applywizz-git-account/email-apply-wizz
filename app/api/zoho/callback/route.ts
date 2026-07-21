@@ -16,10 +16,12 @@ function clearOAuthState(response: NextResponse): NextResponse {
 
 /**
  * Parse the state cookie.
- * Supports the new JSON format { csrf, mailbox } and the legacy plain-UUID format
- * (backward compat for any in-flight sessions from before this change).
+ * Supports the new JSON format { csrf, mailbox, recovery? } and the legacy
+ * plain-UUID format (backward compat for any in-flight sessions from before
+ * this change). `recovery` is only ever trusted from this signed-by-possession
+ * cookie — a raw `recovery=true` on the redirect querystring is never read.
  */
-function parseStateCookie(raw: string): { csrf: string; mailbox: string } {
+function parseStateCookie(raw: string): { csrf: string; mailbox: string; recovery: boolean } {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (
@@ -33,12 +35,13 @@ function parseStateCookie(raw: string): { csrf: string; mailbox: string } {
           typeof (parsed as Record<string, unknown>).mailbox === "string"
             ? ((parsed as Record<string, unknown>).mailbox as string)
             : "",
+        recovery: (parsed as Record<string, unknown>).recovery === true,
       };
     }
   } catch {
     // Legacy: cookie is a plain UUID string (no mailbox targeting)
   }
-  return { csrf: raw, mailbox: "" };
+  return { csrf: raw, mailbox: "", recovery: false };
 }
 
 /**
@@ -64,7 +67,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const { csrf: expectedCsrf, mailbox: requestedMailbox } = parseStateCookie(rawCookie);
+  const { csrf: expectedCsrf, mailbox: requestedMailbox, recovery } = parseStateCookie(rawCookie);
 
   if (receivedState !== expectedCsrf) {
     return clearOAuthState(
@@ -174,6 +177,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   console.log("[Zoho OAuth] access_token_received:", Boolean(accessToken));
   console.log("[Zoho OAuth] refresh_token_received:", Boolean(newRefreshToken));
+  console.log("[Zoho OAuth] recovery_mode:", recovery);
 
   if (!accessToken || !Number.isFinite(expiresIn) || expiresIn <= 0) {
     return clearOAuthState(
@@ -303,11 +307,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const refreshToken =
-    newRefreshToken ||
-    (typeof existing?.refresh_token === "string" ? existing.refresh_token : null);
+  const existingRefreshToken =
+    typeof existing?.refresh_token === "string" ? existing.refresh_token : null;
 
-  if (!refreshToken) {
+  // Recovery mode exists specifically to replace a broken refresh_token — it
+  // must never fall back to the old one, or a failed recovery would silently
+  // look like a success while leaving the same broken connection in place.
+  if (recovery) {
+    if (!newRefreshToken) {
+      return clearOAuthState(
+        NextResponse.json(
+          {
+            error:
+              "Zoho did not issue a new refresh token. Recovery was not completed.",
+          },
+          { status: 400 },
+        ),
+      );
+    }
+  } else if (!newRefreshToken && !existingRefreshToken) {
     return clearOAuthState(
       NextResponse.json(
         {
@@ -318,6 +336,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ),
     );
   }
+
+  const refreshToken = recovery ? newRefreshToken! : (newRefreshToken || existingRefreshToken)!;
 
   const now = new Date();
   const { error: writeError } = await supabase.from("zoho_connections").upsert(
@@ -345,9 +365,26 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  if (recovery) {
+    return clearOAuthState(
+      NextResponse.json(
+        {
+          message: "Zoho OAuth recovery completed.",
+          new_refresh_token_received: true,
+          connection_updated: true,
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      ),
+    );
+  }
+
   return clearOAuthState(
     NextResponse.json(
-      { message: "Zoho OAuth complete. Connection stored safely." },
+      {
+        message: "Zoho OAuth complete. Connection stored safely.",
+        new_refresh_token_received: Boolean(newRefreshToken),
+        existing_refresh_token_preserved: !newRefreshToken && Boolean(existingRefreshToken),
+      },
       { headers: { "Cache-Control": "no-store" } },
     ),
   );

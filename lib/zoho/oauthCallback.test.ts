@@ -27,8 +27,10 @@ vi.mock("@/lib/supabase/server", () => ({
 
 const CSRF = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
-function stateCookie(mailbox: string): string {
-  return `zoho_oauth_state=${encodeURIComponent(JSON.stringify({ csrf: CSRF, mailbox }))}`;
+function stateCookie(mailbox: string, options: { recovery?: boolean } = {}): string {
+  return `zoho_oauth_state=${encodeURIComponent(
+    JSON.stringify({ csrf: CSRF, mailbox, ...(options.recovery ? { recovery: true } : {}) }),
+  )}`;
 }
 
 function legacyCookie(): string {
@@ -54,6 +56,20 @@ function makeFetchMock(accounts: unknown[]) {
       ok: true,
       json: () => Promise.resolve({ data: accounts }),
     });
+  });
+}
+
+function makeFetchMockNoRefreshToken(accounts: unknown[]) {
+  return vi.fn().mockImplementation((url: string) => {
+    if ((url as string).includes("/oauth/v2/token")) {
+      // Zoho's documented behavior on a repeat, already-granted authorization:
+      // access_token only, refresh_token omitted.
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ access_token: "acc-new", expires_in: 3600 }),
+      });
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: accounts }) });
   });
 }
 
@@ -225,6 +241,163 @@ describe("GET /api/zoho/callback — mailbox targeting", () => {
     expect(allLogged).not.toContain("tracker@applywizard.ai");
 
     logSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("normal mode preserves an existing refresh token and reports that honestly", async () => {
+    mockMaybeSingle.mockResolvedValue({ data: { refresh_token: "old-good-token" }, error: null });
+    vi.stubGlobal("fetch", makeFetchMockNoRefreshToken([zohoAccount("tracker@applywizard.ai")]));
+
+    const { GET } = await import("../../app/api/zoho/callback/route");
+    const res = await GET(makeCallbackRequest(stateCookie("tracker@applywizard.ai")));
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      message: string;
+      new_refresh_token_received: boolean;
+      existing_refresh_token_preserved: boolean;
+    };
+    expect(body.message).toContain("Zoho OAuth complete");
+    expect(body.new_refresh_token_received).toBe(false);
+    expect(body.existing_refresh_token_preserved).toBe(true);
+
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ refresh_token: "old-good-token" }),
+      { onConflict: "email_address" },
+    );
+
+    // Never in a response body.
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("old-good-token");
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("GET /api/zoho/callback — recovery mode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setEnvVars();
+  });
+  afterEach(clearEnvVars);
+
+  it("stores a newly returned refresh token and reports recovery success", async () => {
+    mockMaybeSingle.mockResolvedValue({ data: { refresh_token: "old-dead-token" }, error: null });
+    vi.stubGlobal("fetch", makeFetchMock([zohoAccount("tracker@applywizard.ai")]));
+
+    const { GET } = await import("../../app/api/zoho/callback/route");
+    const res = await GET(
+      makeCallbackRequest(stateCookie("tracker@applywizard.ai", { recovery: true })),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      message: string;
+      new_refresh_token_received: boolean;
+      connection_updated: boolean;
+    };
+    expect(body).toEqual({
+      message: "Zoho OAuth recovery completed.",
+      new_refresh_token_received: true,
+      connection_updated: true,
+    });
+
+    // Recovery must never carry the old token forward.
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ refresh_token: "ref", email_address: "tracker@applywizard.ai" }),
+      { onConflict: "email_address" },
+    );
+    const upsertPayload = mockUpsert.mock.calls[0][0] as { refresh_token: string };
+    expect(upsertPayload.refresh_token).not.toBe("old-dead-token");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects recovery and never writes anything when Zoho omits a new refresh token", async () => {
+    mockMaybeSingle.mockResolvedValue({ data: { refresh_token: "old-dead-token" }, error: null });
+    vi.stubGlobal("fetch", makeFetchMockNoRefreshToken([zohoAccount("tracker@applywizard.ai")]));
+
+    const { GET } = await import("../../app/api/zoho/callback/route");
+    const res = await GET(
+      makeCallbackRequest(stateCookie("tracker@applywizard.ai", { recovery: true })),
+    );
+
+    expect(res.status).not.toBe(200);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("Zoho did not issue a new refresh token");
+    expect(body.error).toContain("Recovery was not completed");
+
+    // The old (possibly-dead) token must never be silently kept in recovery mode.
+    expect(mockUpsert).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("recovery mode still enforces exact mailbox targeting — no fallback to another account", async () => {
+    vi.stubGlobal("fetch", makeFetchMock([zohoAccount("ramakrishna@applywizard.ai")]));
+
+    const { GET } = await import("../../app/api/zoho/callback/route");
+    const res = await GET(
+      makeCallbackRequest(stateCookie("tracker@applywizard.ai", { recovery: true })),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockUpsert).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("recovery success response never contains token values", async () => {
+    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+    // Distinguishable, unmistakable-if-leaked values — unlike "acc"/"ref", these
+    // cannot collide with legitimate field names such as new_refresh_token_received.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if ((url as string).includes("/oauth/v2/token")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                access_token: "SECRET-ACCESS-TOKEN-VALUE",
+                refresh_token: "SECRET-REFRESH-TOKEN-VALUE",
+                expires_in: 3600,
+              }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: [zohoAccount("tracker@applywizard.ai")] }),
+        });
+      }),
+    );
+
+    const { GET } = await import("../../app/api/zoho/callback/route");
+    const res = await GET(
+      makeCallbackRequest(stateCookie("tracker@applywizard.ai", { recovery: true })),
+    );
+
+    const raw = await res.text();
+    expect(raw).not.toContain("SECRET-ACCESS-TOKEN-VALUE");
+    expect(raw).not.toContain("SECRET-REFRESH-TOKEN-VALUE");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("legacy plain-UUID cookie (no recovery field) is treated as normal mode, not recovery", async () => {
+    mockMaybeSingle.mockResolvedValue({ data: { refresh_token: "old-good-token" }, error: null });
+    vi.stubGlobal("fetch", makeFetchMockNoRefreshToken([zohoAccount("ramakrishna@applywizard.ai")]));
+
+    const { GET } = await import("../../app/api/zoho/callback/route");
+    const res = await GET(makeCallbackRequest(legacyCookie()));
+
+    // Normal-mode preservation, not a recovery-mode hard failure.
+    expect(res.status).toBe(200);
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ refresh_token: "old-good-token" }),
+      { onConflict: "email_address" },
+    );
+
     vi.unstubAllGlobals();
   });
 });
