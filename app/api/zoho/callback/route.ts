@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { verifyZohoOAuthState } from "@/lib/zoho/oauthState";
 
 const STATE_COOKIE = "zoho_oauth_state";
 
@@ -14,34 +15,15 @@ function clearOAuthState(response: NextResponse): NextResponse {
   return response;
 }
 
-/**
- * Parse the state cookie.
- * Supports the new JSON format { csrf, mailbox, recovery? } and the legacy
- * plain-UUID format (backward compat for any in-flight sessions from before
- * this change). `recovery` is only ever trusted from this signed-by-possession
- * cookie — a raw `recovery=true` on the redirect querystring is never read.
- */
-function parseStateCookie(raw: string): { csrf: string; mailbox: string; recovery: boolean } {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      typeof (parsed as Record<string, unknown>).csrf === "string"
-    ) {
-      return {
-        csrf: (parsed as Record<string, unknown>).csrf as string,
-        mailbox:
-          typeof (parsed as Record<string, unknown>).mailbox === "string"
-            ? ((parsed as Record<string, unknown>).mailbox as string)
-            : "",
-        recovery: (parsed as Record<string, unknown>).recovery === true,
-      };
-    }
-  } catch {
-    // Legacy: cookie is a plain UUID string (no mailbox targeting)
-  }
-  return { csrf: raw, mailbox: "", recovery: false };
+function invalidStateResponse(): NextResponse {
+  // Deliberately generic — never leaks which specific check (signature,
+  // expiry, version, malformed encoding) failed.
+  return clearOAuthState(
+    NextResponse.json(
+      { error: "Invalid OAuth state. Please start the login flow again." },
+      { status: 400 },
+    ),
+  );
 }
 
 /**
@@ -59,23 +41,21 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const rawCookie = request.cookies.get(STATE_COOKIE)?.value;
 
   if (!receivedState || !rawCookie) {
-    return clearOAuthState(
-      NextResponse.json(
-        { error: "Invalid OAuth state. Please start the login flow again." },
-        { status: 400 },
-      ),
-    );
+    return invalidStateResponse();
   }
 
-  const { csrf: expectedCsrf, mailbox: requestedMailbox, recovery } = parseStateCookie(rawCookie);
+  // Rejects missing/malformed/tampered/expired/wrong-version state before any
+  // token exchange, Supabase lookup, or Supabase write — mailbox and recovery
+  // are only trusted after this passes. No unsigned/legacy state is accepted.
+  const verified = verifyZohoOAuthState(rawCookie);
+  if (!verified.ok) {
+    return invalidStateResponse();
+  }
+
+  const { csrf: expectedCsrf, mailbox: requestedMailbox, recovery } = verified.state;
 
   if (receivedState !== expectedCsrf) {
-    return clearOAuthState(
-      NextResponse.json(
-        { error: "Invalid OAuth state. Please start the login flow again." },
-        { status: 400 },
-      ),
-    );
+    return invalidStateResponse();
   }
 
   const zohoError = searchParams.get("error");

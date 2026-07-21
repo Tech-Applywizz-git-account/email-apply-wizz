@@ -16,6 +16,8 @@ vi.mock("@/lib/dashboardAuth/sessionStore", () => ({
   getDashboardSessionByToken: (token: string) => mockGetDashboardSessionByToken(token),
 }));
 
+const OAUTH_STATE_SECRET = "zoho-oauth-state-test-secret-32-bytes-minimum!!";
+
 function adminSession() {
   return {
     ok: true,
@@ -46,16 +48,22 @@ function makeRequest(url: string, cookie?: string): NextRequest {
   return new NextRequest(url, cookie ? { headers: { Cookie: cookie } } : undefined);
 }
 
+function stateCookieValue(setCookieHeader: string): string {
+  return decodeURIComponent(setCookieHeader.split(";")[0].split("=").slice(1).join("="));
+}
+
 function setRequiredEnvVars() {
   process.env.ZOHO_CLIENT_ID = "test-client-id";
   process.env.ZOHO_REDIRECT_URI = "http://localhost:3000/api/zoho/callback";
   process.env.ZOHO_ACCOUNTS_BASE_URL = "https://accounts.zoho.test";
+  process.env.ZOHO_OAUTH_STATE_SECRET = OAUTH_STATE_SECRET;
 }
 
 function clearEnvVars() {
   delete process.env.ZOHO_CLIENT_ID;
   delete process.env.ZOHO_REDIRECT_URI;
   delete process.env.ZOHO_ACCOUNTS_BASE_URL;
+  delete process.env.ZOHO_OAUTH_STATE_SECRET;
 }
 
 describe("GET /api/zoho/login", () => {
@@ -83,8 +91,9 @@ describe("GET /api/zoho/login", () => {
     expect(stateParam).not.toContain("mailbox");
   });
 
-  it("stores requested mailbox in cookie — not in the Zoho redirect URL", async () => {
+  it("stores requested mailbox in a signed cookie — never in plaintext, never in the Zoho redirect URL", async () => {
     const { GET } = await import("../../app/api/zoho/login/route");
+    const { verifyZohoOAuthState } = await import("../../lib/zoho/oauthState");
     const req = makeRequest(
       "http://localhost:3000/api/zoho/login?mailbox=tracker@applywizard.ai",
     );
@@ -96,14 +105,19 @@ describe("GET /api/zoho/login", () => {
     const location = res.headers.get("location") ?? "";
     expect(location).not.toContain("tracker");
 
-    // Mailbox IS in the state cookie
     const cookieHeader = res.headers.get("set-cookie") ?? "";
     expect(cookieHeader).toContain("zoho_oauth_state");
-    expect(cookieHeader).toContain("tracker%40applywizard.ai");
+    // Never sits in the cookie as recognizable plaintext.
+    expect(cookieHeader).not.toContain("tracker%40applywizard.ai");
+    expect(cookieHeader).not.toContain("tracker@applywizard.ai");
+
+    const verified = verifyZohoOAuthState(stateCookieValue(cookieHeader));
+    expect(verified.ok && verified.state.mailbox).toBe("tracker@applywizard.ai");
   });
 
-  it("normalizes mailbox to lowercase", async () => {
+  it("normalizes mailbox to lowercase in the signed state", async () => {
     const { GET } = await import("../../app/api/zoho/login/route");
+    const { verifyZohoOAuthState } = await import("../../lib/zoho/oauthState");
     const req = makeRequest(
       "http://localhost:3000/api/zoho/login?mailbox=TRACKER@APPLYWIZARD.AI",
     );
@@ -111,8 +125,8 @@ describe("GET /api/zoho/login", () => {
 
     expect(res.status).toBe(307);
     const cookieHeader = res.headers.get("set-cookie") ?? "";
-    expect(cookieHeader).toContain("tracker%40applywizard.ai");
-    expect(cookieHeader).not.toContain("TRACKER");
+    const verified = verifyZohoOAuthState(stateCookieValue(cookieHeader));
+    expect(verified.ok && verified.state.mailbox).toBe("tracker@applywizard.ai");
   });
 
   it("rejects invalid mailbox parameter — non-applywizard.ai domain", async () => {
@@ -148,12 +162,35 @@ describe("GET /api/zoho/login", () => {
     expect(cookieHeader).toContain("zoho_oauth_state");
   });
 
-  it("returns 500 when env vars are missing", async () => {
-    clearEnvVars();
+  it("returns 500 when Zoho env vars are missing", async () => {
+    delete process.env.ZOHO_CLIENT_ID;
     const { GET } = await import("../../app/api/zoho/login/route");
     const req = makeRequest("http://localhost:3000/api/zoho/login");
     const res = await GET(req);
     expect(res.status).toBe(500);
+  });
+
+  it("returns 500 safely when ZOHO_OAUTH_STATE_SECRET is missing — never redirects with unsigned state", async () => {
+    delete process.env.ZOHO_OAUTH_STATE_SECRET;
+    const { GET } = await import("../../app/api/zoho/login/route");
+    const req = makeRequest("http://localhost:3000/api/zoho/login");
+    const res = await GET(req);
+
+    expect(res.status).toBe(500);
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("zoho_oauth_state");
+  });
+
+  it("writes only the signed v1 state token into the cookie — never raw JSON", async () => {
+    const { GET } = await import("../../app/api/zoho/login/route");
+    const req = makeRequest("http://localhost:3000/api/zoho/login?mailbox=tracker@applywizard.ai");
+    const res = await GET(req);
+
+    const cookieHeader = res.headers.get("set-cookie") ?? "";
+    const value = stateCookieValue(cookieHeader);
+
+    expect(value).toMatch(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    expect(() => JSON.parse(value)).toThrow();
   });
 
   it("normal mode (no recovery flag) never includes prompt=consent", async () => {
@@ -230,16 +267,17 @@ describe("GET /api/zoho/login", () => {
     it("carries the recovery flag in the signed state cookie, never in the Zoho redirect URL", async () => {
       mockGetDashboardSessionByToken.mockResolvedValue(adminSession());
       const { GET } = await import("../../app/api/zoho/login/route");
+      const { verifyZohoOAuthState } = await import("../../lib/zoho/oauthState");
       const res = await GET(makeRequest(RECOVERY_URL, "dashboard_session=admin-token"));
 
       const location = res.headers.get("location") ?? "";
       expect(location).not.toContain("recovery");
 
       const cookieHeader = res.headers.get("set-cookie") ?? "";
-      const cookieValue = decodeURIComponent(cookieHeader.split(";")[0].split("=").slice(1).join("="));
-      const parsed = JSON.parse(cookieValue) as { csrf: string; mailbox: string; recovery?: boolean };
-      expect(parsed.recovery).toBe(true);
-      expect(parsed.mailbox).toBe("tracker@applywizard.ai");
+      const verified = verifyZohoOAuthState(stateCookieValue(cookieHeader));
+      expect(verified.ok).toBe(true);
+      expect(verified.ok && verified.state.recovery).toBe(true);
+      expect(verified.ok && verified.state.mailbox).toBe("tracker@applywizard.ai");
     });
   });
 });

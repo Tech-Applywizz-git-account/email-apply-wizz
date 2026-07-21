@@ -3,6 +3,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { getDashboardSessionByToken } from "@/lib/dashboardAuth/sessionStore";
 import { isAdminCeo } from "@/lib/dashboardAuth/roles";
 import { DASHBOARD_SESSION_COOKIE_NAME } from "@/lib/dashboardAuth/sessionCookie";
+import { createZohoOAuthState } from "@/lib/zoho/oauthState";
 
 /**
  * GET /api/zoho/login
@@ -21,15 +22,18 @@ import { DASHBOARD_SESSION_COOKIE_NAME } from "@/lib/dashboardAuth/sessionCookie
  * explicit mailbox — it targets one specific, already-known connection, never
  * a generic/first-account flow.
  *
- * State cookie stores { csrf, mailbox, recovery? } as JSON (httpOnly). Only the
- * opaque `csrf` UUID is sent to Zoho as the `state` parameter — recovery is
- * never trusted from the raw redirect querystring on the way back, only from
- * this cookie.
+ * State cookie stores an HMAC-signed, expiring token (see lib/zoho/oauthState)
+ * encoding { csrf, mailbox, recovery, iat, exp } — httpOnly cookie flags alone
+ * don't prove the app produced these values, so the callback verifies the
+ * signature before trusting any of them. Only the opaque `csrf` UUID is sent
+ * to Zoho as the `state` parameter — recovery is never trusted from the raw
+ * redirect querystring on the way back, only from this signed cookie.
  *
  * Required environment variables:
  *   ZOHO_CLIENT_ID
  *   ZOHO_REDIRECT_URI
  *   ZOHO_ACCOUNTS_BASE_URL
+ *   ZOHO_OAUTH_STATE_SECRET
  */
 
 const MAILBOX_RE = /^[\w.+\-']+@applywizard\.ai$/i;
@@ -102,9 +106,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   // csrf is the opaque value sent to Zoho as `state`.
-  // mailbox/recovery are kept server-side in the httpOnly cookie only — never sent to Zoho.
+  // mailbox/recovery are kept server-side in the signed cookie only — never sent to Zoho.
   const csrf = crypto.randomUUID();
-  const cookiePayload = JSON.stringify({ csrf, mailbox, ...(recovery ? { recovery: true } : {}) });
+
+  let signedState: string;
+  try {
+    signedState = createZohoOAuthState({ csrf, mailbox, recovery });
+  } catch (error) {
+    console.error(
+      "[Zoho OAuth] Failed to sign OAuth state:",
+      error instanceof Error ? error.message : "Unknown error",
+    );
+    return NextResponse.json(
+      { error: "Zoho OAuth is not configured on the server." },
+      { status: 500 },
+    );
+  }
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -122,7 +139,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const authUrl = `${accountsBaseUrl}/oauth/v2/auth?${params.toString()}`;
   const response = NextResponse.redirect(authUrl);
 
-  response.cookies.set("zoho_oauth_state", cookiePayload, {
+  response.cookies.set("zoho_oauth_state", signedState, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
