@@ -39,6 +39,14 @@ type GenericOkResponse = { ok: true } | { ok: false };
 
 const GENERIC_FAILURE = "Sign-in failed. Try again.";
 
+// Exported so the "progress indicator only for the first-time-setup path,
+// never for the returning-user (login) path" requirement is unit-testable
+// directly, without needing a DOM/event-simulation library to drive the
+// stateful client component through each step.
+export function shouldShowSetupProgress(step: AuthStep): boolean {
+  return step === "otp" || step === "setup";
+}
+
 function sanitizeNumeric(value: string, maxLength: number): string {
   return value.replace(/\D/g, "").slice(0, maxLength);
 }
@@ -416,7 +424,7 @@ export function DashboardAuthClient() {
             </div>
           </header>
 
-          {step === "otp" || step === "setup" ? (
+          {shouldShowSetupProgress(step) ? (
             <ol className="dashboard-auth-progress" aria-label="Setup progress">
               <li className={step === "otp" || step === "setup" ? "done" : ""}>1. Verify Email</li>
               <li className={step === "setup" ? "done" : ""}>2. Secure Account</li>
