@@ -43,6 +43,7 @@ let cronLocks: CronLockRow[];
 let nextOtpInsertResult: { ok: false } | null;
 let nextEmailSendResult: { ok: false; reason: "explicit_failure" | "timeout_or_unknown" } | null;
 let pendingFirstEmailGate: Promise<void> | null;
+let loginStartLockBackendUnreachable: boolean;
 
 const TEST_TIME = new Date("2026-07-11T10:00:00.000Z");
 const SESSION_TOKEN_REGEX = /^[A-Za-z0-9_-]+$/u;
@@ -205,47 +206,52 @@ vi.mock("@/lib/dashboardAuth/microsoftGraphOtp", () => ({
 }));
 
 vi.mock("@/lib/supabase/serviceRole", () => ({
-  createSupabaseServiceRoleClient: () => ({
-    from: (table: string) => {
-      if (table !== "cron_locks") throw new Error(`unexpected table ${table}`);
-      return {
-        delete: () => {
-          const eqFilters: Record<string, string> = {};
-          let ltFilter: { column: keyof CronLockRow; value: string } | null = null;
-          const chain = {
-            eq: (column: string, value: string) => {
-              eqFilters[column] = value;
-              return chain;
-            },
-            lt: (column: keyof CronLockRow, value: string) => {
-              ltFilter = { column, value };
-              return chain;
-            },
-            then: (resolve: (value: { error: null }) => void) => {
-              cronLocks = cronLocks.filter((row) => {
-                const matchesEq = Object.entries(eqFilters).every(
-                  ([column, value]) => row[column as keyof CronLockRow] === value,
-                );
-                const matchesLt = ltFilter
-                  ? new Date(row[ltFilter.column]).getTime() < new Date(ltFilter.value).getTime()
-                  : true;
-                return !(matchesEq && matchesLt);
-              });
-              resolve({ error: null });
-            },
-          };
-          return chain;
-        },
-        insert: async (row: CronLockRow) => {
-          if (cronLocks.some((existing) => existing.lock_key === row.lock_key)) {
-            return { error: { code: "23505", message: "duplicate key" } };
-          }
-          cronLocks.push(row);
-          return { error: null };
-        },
-      };
-    },
-  }),
+  createSupabaseServiceRoleClient: () => {
+    if (loginStartLockBackendUnreachable) {
+      throw new Error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.");
+    }
+    return {
+      from: (table: string) => {
+        if (table !== "cron_locks") throw new Error(`unexpected table ${table}`);
+        return {
+          delete: () => {
+            const eqFilters: Record<string, string> = {};
+            let ltFilter: { column: keyof CronLockRow; value: string } | null = null;
+            const chain = {
+              eq: (column: string, value: string) => {
+                eqFilters[column] = value;
+                return chain;
+              },
+              lt: (column: keyof CronLockRow, value: string) => {
+                ltFilter = { column, value };
+                return chain;
+              },
+              then: (resolve: (value: { error: null }) => void) => {
+                cronLocks = cronLocks.filter((row) => {
+                  const matchesEq = Object.entries(eqFilters).every(
+                    ([column, value]) => row[column as keyof CronLockRow] === value,
+                  );
+                  const matchesLt = ltFilter
+                    ? new Date(row[ltFilter.column]).getTime() < new Date(ltFilter.value).getTime()
+                    : true;
+                  return !(matchesEq && matchesLt);
+                });
+                resolve({ error: null });
+              },
+            };
+            return chain;
+          },
+          insert: async (row: CronLockRow) => {
+            if (cronLocks.some((existing) => existing.lock_key === row.lock_key)) {
+              return { error: { code: "23505", message: "duplicate key" } };
+            }
+            cronLocks.push(row);
+            return { error: null };
+          },
+        };
+      },
+    };
+  },
 }));
 
 vi.mock("@/lib/dashboardAuth/sessionStore", () => ({
@@ -329,6 +335,7 @@ beforeEach(() => {
   nextOtpInsertResult = null;
   nextEmailSendResult = null;
   pendingFirstEmailGate = null;
+  loginStartLockBackendUnreachable = false;
 });
 
 function failNextOtpInsert(): void {
@@ -470,6 +477,20 @@ describe("startDashboardLogin", () => {
     const second = await startDashboardLogin({ email: "new.ca@applywizz.ai" });
     expect(second).toEqual(first);
     expect(createOtpCalls).toHaveLength(1);
+  });
+
+  it("fails closed to the generic response when the login-start lock backend is unreachable", async () => {
+    loginStartLockBackendUnreachable = true;
+    const { startDashboardLogin } = await import("./authFlow");
+
+    await expect(startDashboardLogin({ email: "admin@applywizz.ai" })).resolves.toEqual({
+      ok: true,
+      nextStep: "email_otp",
+      challengeId: expect.any(String),
+    });
+    expect(sentEmails).toHaveLength(0);
+    expect(createOtpCalls).toHaveLength(0);
+    expect(sessions).toHaveLength(0);
   });
 });
 

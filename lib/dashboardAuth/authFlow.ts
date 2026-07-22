@@ -87,30 +87,40 @@ function dashboardLoginStartLockKey(normalizedEmail: string): string {
 async function acquireDashboardLoginStartLock(
   normalizedEmail: string,
 ): Promise<{ ok: true; ownerToken: string; lockKey: string } | { ok: false }> {
-  const supabase = createSupabaseServiceRoleClient() as unknown as CronLocksLike;
   const lockKey = dashboardLoginStartLockKey(normalizedEmail);
   const ownerToken = randomUUID();
 
-  for (let attempt = 0; attempt < LOGIN_START_LOCK_ATTEMPTS; attempt++) {
-    const staleBefore = new Date(Date.now() - LOGIN_START_LOCK_STALE_MS).toISOString();
-    await supabase.from("cron_locks").delete().eq("lock_key", lockKey).lt("started_at", staleBefore);
-    const { error } = await supabase.from("cron_locks").insert({
-      lock_key: lockKey,
-      started_at: new Date().toISOString(),
-      owner_token: ownerToken,
-    });
+  try {
+    const supabase = createSupabaseServiceRoleClient() as unknown as CronLocksLike;
 
-    if (!error) return { ok: true, ownerToken, lockKey };
-    if (error.code !== "23505") return { ok: false };
-    await new Promise((resolve) => setTimeout(resolve, LOGIN_START_LOCK_WAIT_MS));
+    for (let attempt = 0; attempt < LOGIN_START_LOCK_ATTEMPTS; attempt++) {
+      const staleBefore = new Date(Date.now() - LOGIN_START_LOCK_STALE_MS).toISOString();
+      await supabase.from("cron_locks").delete().eq("lock_key", lockKey).lt("started_at", staleBefore);
+      const { error } = await supabase.from("cron_locks").insert({
+        lock_key: lockKey,
+        started_at: new Date().toISOString(),
+        owner_token: ownerToken,
+      });
+
+      if (!error) return { ok: true, ownerToken, lockKey };
+      if (error.code !== "23505") return { ok: false };
+      await new Promise((resolve) => setTimeout(resolve, LOGIN_START_LOCK_WAIT_MS));
+    }
+
+    return { ok: false };
+  } catch {
+    return { ok: false };
   }
-
-  return { ok: false };
 }
 
 async function releaseDashboardLoginStartLock(lock: { ownerToken: string; lockKey: string }): Promise<void> {
-  const supabase = createSupabaseServiceRoleClient() as unknown as CronLocksLike;
-  await supabase.from("cron_locks").delete().eq("lock_key", lock.lockKey).eq("owner_token", lock.ownerToken);
+  try {
+    const supabase = createSupabaseServiceRoleClient() as unknown as CronLocksLike;
+    await supabase.from("cron_locks").delete().eq("lock_key", lock.lockKey).eq("owner_token", lock.ownerToken);
+  } catch {
+    // Best-effort release: a lock we fail to delete here self-heals via the
+    // staleness purge in acquireDashboardLoginStartLock on its next attempt.
+  }
 }
 
 export type DashboardLoginStartResult =
