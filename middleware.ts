@@ -8,6 +8,8 @@ const PROTECTED_PATHS = [
   "/clients",
   "/operations",
   "/review-queue",
+  "/ca-portfolio",
+  "/access-pending",
 ];
 
 /**
@@ -83,5 +85,7 @@ export const config = {
     "/clients/:path*",
     "/operations/:path*",
     "/review-queue",
+    "/ca-portfolio/:path*",
+    "/access-pending",
   ],
 };
