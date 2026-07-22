@@ -420,7 +420,6 @@ export function DashboardAuthClient() {
               <h1 className="dashboard-auth-title">Sign in</h1>
             </div>
           </div>
-          <p className="dashboard-auth-subtitle">Approved staff only.</p>
         </header>
 
         <section className="dashboard-auth-steps" aria-label="Authentication steps">
