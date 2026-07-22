@@ -306,7 +306,9 @@ export function SuccessTransition({ signedInAs }: { signedInAs: string }) {
   );
 }
 
-export function DashboardAuthClient() {
+export function DashboardAuthClient({
+  initialError = "",
+}: { initialError?: string } = {}) {
   const router = useRouter();
   const busyRef = useRef(false);
   const [step, setStep] = useState<AuthStep>("email");
@@ -318,7 +320,7 @@ export function DashboardAuthClient() {
   const [challenge, setChallenge] = useState("");
   const [totpSecret, setTotpSecret] = useState("");
   const [provisioningUri, setProvisioningUri] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(initialError);
   const [busy, setBusy] = useState(false);
   const [submittedEmail, setSubmittedEmail] = useState("");
   const [resendSecondsLeft, setResendSecondsLeft] = useState(0);

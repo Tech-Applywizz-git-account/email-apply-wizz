@@ -24,5 +24,5 @@ export async function requireDashboardSession(): Promise<DashboardSession> {
     // Fail closed: uncertainty means no protected page access.
   }
 
-  redirect("/dashboard/login");
+  redirect("/?expired=1");
 }

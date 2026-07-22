@@ -9,7 +9,13 @@ import { resolveRootRedirect } from "@/lib/dashboardAuth/rootRedirect";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const expired = params.expired === "1";
   const cookieStore = await cookies();
   const rawSessionToken = cookieStore.get(DASHBOARD_SESSION_COOKIE_NAME)?.value;
 
@@ -26,5 +32,9 @@ export default async function Home() {
     }
   }
 
-  return <DashboardAuthClient />;
+  return (
+    <DashboardAuthClient
+      initialError={expired ? "Your session has expired. Please sign in again." : ""}
+    />
+  );
 }
