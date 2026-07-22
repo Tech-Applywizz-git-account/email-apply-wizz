@@ -90,6 +90,8 @@ function referenceTotp(secret: string, now: Date): string {
 vi.mock("@/lib/dashboardAuth/users", () => ({
   getOrCreateDashboardUserForLogin: async (email: string) => {
     const normalized = normalizeEmail(email);
+    if (!normalized.endsWith("@applywizz.ai") || normalized.includes("+")) return null;
+
     const existing = users.find((user) => normalizeEmail(user.email) === normalized);
     if (existing) {
       return {
@@ -103,8 +105,6 @@ vi.mock("@/lib/dashboardAuth/users", () => ({
         },
       };
     }
-
-    if (!normalized.endsWith("@applywizz.ai") || normalized.includes("+")) return null;
 
     const created: UserState = {
       id: `user-${users.length + 1}`,
@@ -426,6 +426,26 @@ describe("startDashboardLogin", () => {
     expect(result).toEqual({ ok: true, nextStep: "email_otp", challengeId: expect.any(String) });
     expect(sentEmails).toHaveLength(0);
     expect(createOtpCalls).toHaveLength(0);
+  });
+
+  it("blocks a pre-existing active row whose email is no longer policy-eligible", async () => {
+    users.push({
+      id: "user-3",
+      email: "user+test@applywizz.ai",
+      role: "ca",
+      status: "active",
+      totpEnabled: false,
+      totpSecretEncrypted: null,
+    });
+
+    const { startDashboardLogin } = await import("./authFlow");
+    const result = await startDashboardLogin({ email: "user+test@applywizz.ai" });
+
+    expect(result).toEqual({ ok: true, nextStep: "email_otp", challengeId: expect.any(String) });
+    expect(sentEmails).toHaveLength(0);
+    expect(createOtpCalls).toHaveLength(0);
+    expect(sessions).toHaveLength(0);
+    expect(audits.filter((event) => event.eventType === "account_auto_provisioned")).toHaveLength(0);
   });
 
   it("returns the same shape for a throttled active user without sending email", async () => {

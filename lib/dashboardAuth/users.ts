@@ -163,15 +163,18 @@ export type DashboardUserForLoginResult =
 
 /**
  * Returns the existing dashboard user for this email, or auto-creates one
- * for an eligible @applywizz.ai address. Never changes the role or status
- * of an existing row — auto-provisioning only ever fires when no row exists.
+ * for an eligible @applywizz.ai address. The email policy is checked before
+ * any existing-row lookup, so a pre-existing row with a now-blocked email
+ * (external domain, alias, lookalike domain) cannot log in. Never changes
+ * the role or status of an existing row — auto-provisioning only ever
+ * fires when no row exists.
  */
 export async function getOrCreateDashboardUserForLogin(email: string): Promise<DashboardUserForLoginResult> {
-  const existing = await getDashboardUserByEmail(email);
-  if (existing) return { user: existing, created: false };
-
   const decision = resolveAutoProvisionRole(email);
   if (!decision.eligible) return null;
+
+  const existing = await getDashboardUserByEmail(decision.email);
+  if (existing) return { user: existing, created: false };
 
   try {
     const supabase = createSupabaseServiceRoleClient() as unknown as SupabaseLike;

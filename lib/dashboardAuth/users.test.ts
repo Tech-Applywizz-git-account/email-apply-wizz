@@ -384,6 +384,30 @@ describe("getOrCreateDashboardUserForLogin", () => {
     expect(noInsertOccurred()).toBe(true);
   });
 
+  it.each([
+    ["plus alias", "user+test@applywizz.ai"],
+    ["external domain", "user@gmail.com"],
+    ["lookalike product domain", "user@applywizard.ai"],
+    ["subdomain", "user@sub.applywizz.ai"],
+    ["lookalike suffix domain", "user@applywizz.ai.evil"],
+  ])(
+    "blocks login for a pre-existing active row with a policy-blocked email (%s)",
+    async (_label, email) => {
+      users.push({
+        id: "blocked-existing",
+        email,
+        role: "ca",
+        status: "active",
+        totp_enabled: false,
+        totp_secret_encrypted: null,
+      });
+
+      const { getOrCreateDashboardUserForLogin } = await import("./users");
+      await expect(getOrCreateDashboardUserForLogin(email)).resolves.toBeNull();
+      expect(noInsertOccurred()).toBe(true);
+    },
+  );
+
   it("recovers from PostgreSQL 23505 by re-reading the winning row", async () => {
     forceNextDashboardUserInsertToReturn23505ThenExposeRow({
       id: "race-user",
