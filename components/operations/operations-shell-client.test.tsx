@@ -83,6 +83,12 @@ describe("OperationsShellClient", () => {
     );
     expect(admin).toContain("Live Monitor");
     expect(admin).toContain("Review Queue");
+    // The mobile-bottom-nav surface uses its own shorter label ("Review", not
+    // "Review Queue") for this link, so it needs a check tied to its own
+    // markup (the nav-text span it alone uses) to prove that surface itself
+    // renders the broad-ops link, rather than relying on "Review Queue"
+    // matching only because sidebar-nav/drawer-nav happen to render too.
+    expect(admin).toContain('<span class="nav-text">Review</span>');
 
     const ca = renderToStaticMarkup(
       <OperationsShellClient userName="Navya" userRole="ca">
@@ -92,5 +98,24 @@ describe("OperationsShellClient", () => {
     expect(ca).not.toContain("Live Monitor");
     expect(ca).not.toContain("Review Queue");
     expect(ca).not.toContain("Clients");
+    // Unambiguous, bottom-nav-specific negative check: the "Review Queue"
+    // assertion above is only ever satisfied by sidebar-nav/drawer-nav
+    // markup, because mobile-bottom-nav renders that link as plain "Review".
+    // A regression that ungated mobile-bottom-nav's broad links while
+    // leaving "Clients" text unchanged there would still pass every
+    // assertion above; this one only passes if bottom-nav's own review link
+    // is actually hidden for ca.
+    expect(ca).not.toContain('<span class="nav-text">Review</span>');
+
+    // Positive coverage: for a ca session, "Access Pending" should appear
+    // exactly 3 times in the static markup. mobileMenuOpen starts false, so
+    // drawer-nav never renders in a static (non-interactive) render and
+    // contributes 0. sidebar-nav's NavLink renders the label twice (once as
+    // the Link's aria-label attribute, once as the visible nav-label span),
+    // contributing 2. mobile-bottom-nav renders it once as a nav-text span,
+    // contributing 1. Total: 2 + 0 + 1 = 3. If a future change ungated one
+    // of these surfaces for ca (rendering broad-ops links instead of
+    // Access Pending there), this count would drop below 3.
+    expect(ca.split("Access Pending").length - 1).toBe(3);
   });
 });
