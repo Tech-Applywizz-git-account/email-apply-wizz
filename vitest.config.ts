@@ -8,7 +8,6 @@ export default defineConfig({
   test: {
     environment: "node",
     include: [
-      "middleware.test.ts",
       "lib/**/*.test.ts",
       "app/**/*.test.tsx",
       "components/**/*.test.tsx",

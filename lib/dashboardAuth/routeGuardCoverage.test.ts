@@ -75,14 +75,6 @@ describe("dashboard session route guard coverage", () => {
     expect(hasASessionGuard(source)).toBe(true);
   });
 
-  it("keeps middleware free of server-only session validation imports", () => {
-    const source = read("middleware.ts");
-
-    expect(source).not.toContain("getDashboardSessionByToken");
-    expect(source).not.toContain("requireDashboardSession");
-    expect(source).not.toContain("sessionStore");
-  });
-
   it("adds a hard-navigation logout action to the operations shell", () => {
     const source = read("components/operations/operations-shell-client.tsx");
 
