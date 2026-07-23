@@ -8,10 +8,6 @@ vi.mock("@/lib/dashboardAuth/sessionStore", () => ({
   revokeDashboardSession,
 }));
 
-function basicAuth(username: string, password: string): string {
-  return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
-}
-
 function makeRequest(headers: Record<string, string> = {}): NextRequest {
   return new NextRequest("https://email-apply-wizz.test/api/dashboard/auth/logout", {
     method: "POST",
@@ -19,38 +15,25 @@ function makeRequest(headers: Record<string, string> = {}): NextRequest {
   });
 }
 
-const previousSecret = process.env.DASHBOARD_SECRET;
 const previousNodeEnv = process.env.NODE_ENV;
 
 beforeEach(() => {
-  process.env.DASHBOARD_SECRET = "test-dashboard-secret";
   process.env.NODE_ENV = "test";
   revokeDashboardSession.mockReset();
   revokeDashboardSession.mockResolvedValue({ ok: true });
 });
 
 afterEach(() => {
-  if (previousSecret === undefined) delete process.env.DASHBOARD_SECRET;
-  else process.env.DASHBOARD_SECRET = previousSecret;
   if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = previousNodeEnv;
   vi.restoreAllMocks();
 });
 
 describe("POST /api/dashboard/auth/logout", () => {
-  it("requires Basic Auth during Phase A", async () => {
-    const { POST } = await import("./route");
-    const res = await POST(makeRequest());
-
-    expect(res.status).toBe(401);
-    expect(revokeDashboardSession).not.toHaveBeenCalled();
-  });
-
   it("revokes a valid session cookie and clears the cookie", async () => {
     const { POST } = await import("./route");
     const res = await POST(
       makeRequest({
-        authorization: basicAuth("admin", "test-dashboard-secret"),
         cookie: "dashboard_session=raw-session-token",
         origin: "https://email-apply-wizz.test",
       }),
@@ -74,7 +57,6 @@ describe("POST /api/dashboard/auth/logout", () => {
     const { POST } = await import("./route");
     const res = await POST(
       makeRequest({
-        authorization: basicAuth("admin", "test-dashboard-secret"),
         cookie: "dashboard_session=raw-session-token",
       }),
     );
@@ -90,9 +72,7 @@ describe("POST /api/dashboard/auth/logout", () => {
     ["already revoked cookie value", "dashboard_session=already-revoked"],
   ])("returns success and clears the cookie for %s", async (_label, cookie) => {
     const { POST } = await import("./route");
-    const headers: Record<string, string> = {
-      authorization: basicAuth("admin", "test-dashboard-secret"),
-    };
+    const headers: Record<string, string> = {};
     if (cookie) headers.cookie = cookie;
 
     const res = await POST(makeRequest(headers));
@@ -105,7 +85,6 @@ describe("POST /api/dashboard/auth/logout", () => {
   it("returns success for repeated logout requests", async () => {
     const { POST } = await import("./route");
     const headers = {
-      authorization: basicAuth("admin", "test-dashboard-secret"),
       cookie: "dashboard_session=raw-session-token",
     };
 
@@ -123,7 +102,6 @@ describe("POST /api/dashboard/auth/logout", () => {
     const { POST } = await import("./route");
     const res = await POST(
       makeRequest({
-        authorization: basicAuth("admin", "test-dashboard-secret"),
         cookie: "dashboard_session=raw-session-token",
       }),
     );
@@ -137,7 +115,6 @@ describe("POST /api/dashboard/auth/logout", () => {
     const { POST } = await import("./route");
     const res = await POST(
       makeRequest({
-        authorization: basicAuth("admin", "test-dashboard-secret"),
         cookie: "dashboard_session=raw-session-token",
       }),
     );
@@ -151,11 +128,10 @@ describe("POST /api/dashboard/auth/logout", () => {
     const { POST } = await import("./route");
 
     const missingOrigin = await POST(
-      makeRequest({ authorization: basicAuth("admin", "test-dashboard-secret") }),
+      makeRequest(),
     );
     const matchingOrigin = await POST(
       makeRequest({
-        authorization: basicAuth("admin", "test-dashboard-secret"),
         origin: "https://email-apply-wizz.test",
       }),
     );
@@ -168,7 +144,6 @@ describe("POST /api/dashboard/auth/logout", () => {
     const { POST } = await import("./route");
     const res = await POST(
       makeRequest({
-        authorization: basicAuth("admin", "test-dashboard-secret"),
         cookie: "dashboard_session=raw-session-token",
         origin: "https://attacker.test",
       }),
@@ -187,7 +162,6 @@ describe("POST /api/dashboard/auth/logout", () => {
 
     await POST(
       makeRequest({
-        authorization: basicAuth("admin", "test-dashboard-secret"),
         cookie: "dashboard_session=raw-session-token",
       }),
     );

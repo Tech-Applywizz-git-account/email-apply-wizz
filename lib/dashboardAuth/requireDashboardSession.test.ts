@@ -40,10 +40,13 @@ describe("requireDashboardSession", () => {
     getDashboardSessionByTokenMock.mockResolvedValue({ ok: false });
   });
 
-  it("redirects to /dashboard/login when the dashboard session cookie is missing", async () => {
+  it("redirects to the root page with an expired flag when the session is missing", async () => {
+    cookiesMock.mockResolvedValueOnce({
+      get: vi.fn().mockReturnValue(undefined),
+    });
     const { requireDashboardSession } = await import("./requireDashboardSession");
 
-    await expect(requireDashboardSession()).rejects.toThrow("REDIRECT:/dashboard/login");
+    await expect(requireDashboardSession()).rejects.toThrow("REDIRECT:/?expired=1");
     expect(getDashboardSessionByTokenMock).not.toHaveBeenCalled();
   });
 
@@ -55,25 +58,25 @@ describe("requireDashboardSession", () => {
     "disabled user",
     "missing user",
     "database failure",
-  ])("redirects to /dashboard/login for %s", async () => {
+  ])("redirects to /?expired=1 for %s", async () => {
     cookiesMock.mockResolvedValueOnce({
       get: vi.fn().mockReturnValue({ value: "raw-session-token" }),
     });
     getDashboardSessionByTokenMock.mockResolvedValueOnce({ ok: false });
     const { requireDashboardSession } = await import("./requireDashboardSession");
 
-    await expect(requireDashboardSession()).rejects.toThrow("REDIRECT:/dashboard/login");
+    await expect(requireDashboardSession()).rejects.toThrow("REDIRECT:/?expired=1");
     expect(getDashboardSessionByTokenMock).toHaveBeenCalledWith("raw-session-token");
   });
 
-  it("redirects to /dashboard/login when session validation throws unexpectedly", async () => {
+  it("redirects to /?expired=1 when session validation throws unexpectedly", async () => {
     cookiesMock.mockResolvedValueOnce({
       get: vi.fn().mockReturnValue({ value: "raw-session-token" }),
     });
     getDashboardSessionByTokenMock.mockRejectedValueOnce(new Error("db unavailable"));
     const { requireDashboardSession } = await import("./requireDashboardSession");
 
-    await expect(requireDashboardSession()).rejects.toThrow("REDIRECT:/dashboard/login");
+    await expect(requireDashboardSession()).rejects.toThrow("REDIRECT:/?expired=1");
   });
 
   it("returns the validated session when the reviewed helper succeeds", async () => {
@@ -97,7 +100,7 @@ describe("requireDashboardSession", () => {
     getDashboardSessionByTokenMock.mockResolvedValueOnce({ ok: false });
     const { requireDashboardSession } = await import("./requireDashboardSession");
 
-    await expect(requireDashboardSession()).rejects.toThrow("REDIRECT:/dashboard/login");
+    await expect(requireDashboardSession()).rejects.toThrow("REDIRECT:/?expired=1");
     expect(logSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();

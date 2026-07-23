@@ -9,11 +9,15 @@
  * Safe logging rule: never log access tokens, refresh tokens, or email content.
  */
 
-import { NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { syncTrackerMailbox } from "@/lib/worker-core/syncTrackerMailbox";
 import { classifyQueue } from "@/lib/worker-core/classifyQueue";
+import { requireApiRole } from "@/lib/dashboardAuth/apiAuth";
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  const auth = await requireApiRole(request, ["admin_ceo"]);
+  if (!auth.ok) return auth.response;
+
   // Step 1 — Sync latest email metadata from Zoho
   let syncResult;
   try {

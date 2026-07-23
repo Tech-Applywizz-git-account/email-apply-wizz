@@ -25,8 +25,12 @@ import { type NextRequest, NextResponse } from "next/server";
 import { tryRegexExtract } from "@/lib/classify/regexExtractor";
 import { classifyWithAI } from "@/lib/classify/aiClassifier";
 import type { EmailInput } from "@/lib/classify/types";
+import { requireApiRole } from "@/lib/dashboardAuth/apiAuth";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const auth = await requireApiRole(request, ["admin_ceo"]);
+  if (!auth.ok) return auth.response;
+
   // ── 1. Parse and validate request body ──────────────────────────────────────
   let rawBody: unknown;
   try {

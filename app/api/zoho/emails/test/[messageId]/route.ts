@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireApiRole } from "@/lib/dashboardAuth/apiAuth";
 
 interface ZohoDetailsData {
   messageId: string;
@@ -48,6 +49,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ messageId: string }> }
 ) {
+  const auth = await requireApiRole(request, ["admin_ceo"]);
+  if (!auth.ok) return auth.response;
+
   const { messageId } = await params;
   const { searchParams } = new URL(request.url);
   const folderId = searchParams.get("folderId");
