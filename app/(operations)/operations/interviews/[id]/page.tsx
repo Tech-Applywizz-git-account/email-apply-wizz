@@ -1,10 +1,10 @@
-import { revalidatePath } from "next/cache";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
+import { requireOperationsAccess } from "@/lib/dashboardAuth/requireOperationsAccess";
 import { getInterviewById } from "@/lib/zoho/operationsTable";
 import { getSafeEmailPreview } from "@/lib/zoho/emailPreview";
 import { getReviewSubmissionBanner } from "@/lib/zoho/reviewActionFeedback";
-import { submitReviewDecision, type ReviewDecision } from "@/lib/zoho/reviewCorrection";
+import { reviewAction } from "./review-actions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -22,40 +22,6 @@ function formatDate(value: string | null): string {
   });
 }
 
-async function reviewAction(id: string, formData: FormData) {
-  "use server";
-
-  const decision = formData.get("decision") as ReviewDecision;
-  const newCategory = formData.get("category")?.toString();
-  const correctionReason = formData.get("correction_reason")?.toString();
-
-  if (decision === "change_category" && !newCategory) {
-    redirect(`/operations/interviews/${id}?review=missing_category`);
-  }
-
-  const result = await submitReviewDecision({
-    id,
-    decision,
-    newCategory: newCategory || undefined,
-    correctionReason: correctionReason || undefined,
-    reviewedBy: "admin",
-  });
-
-  if (!result.ok) {
-    const review =
-      result.code === "INVALID_CATEGORY"
-        ? "invalid_category"
-        : result.code === "ROW_NOT_FOUND"
-          ? "row_not_found"
-          : "save_failed";
-
-    redirect(`/operations/interviews/${id}?review=${review}`);
-  }
-
-  revalidatePath(`/operations/interviews/${id}`);
-  redirect(`/operations/interviews/${id}?review=saved`);
-}
-
 export default async function InterviewDetailPage({
   params,
   searchParams,
@@ -63,6 +29,8 @@ export default async function InterviewDetailPage({
   params: Promise<{ id: string }>;
   searchParams: SearchParams;
 }) {
+  await requireOperationsAccess();
+
   const { id } = await params;
   const paramsResult = await searchParams;
   const result = await getInterviewById(id);

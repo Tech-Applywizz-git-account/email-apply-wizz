@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { CooBadge, EmptyState, MetricCard, SectionBlock } from "@/components/coo";
+import { requireOperationsAccess } from "@/lib/dashboardAuth/requireOperationsAccess";
 import { getOverviewWorkspaceData } from "@/lib/zoho/cooWorkspace";
 
 export const dynamic = "force-dynamic";
@@ -88,6 +89,8 @@ function toneForQueueState(value: string): "success" | "warning" | "critical" | 
 }
 
 export default async function OverviewPage({ searchParams }: { searchParams: SearchParams }) {
+  await requireOperationsAccess();
+
   const params = await searchParams;
   const current = new URLSearchParams();
   const range = valueFrom(params.range) ?? "today";
