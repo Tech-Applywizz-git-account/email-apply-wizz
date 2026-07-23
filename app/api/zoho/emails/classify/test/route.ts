@@ -1,7 +1,11 @@
-import { NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { classifyQueue } from "@/lib/worker-core/classifyQueue";
+import { requireApiRole } from "@/lib/dashboardAuth/apiAuth";
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  const auth = await requireApiRole(request, ["admin_ceo"]);
+  if (!auth.ok) return auth.response;
+
   try {
     const result = await classifyQueue();
     return NextResponse.json({ message: "Classification complete", ...result });

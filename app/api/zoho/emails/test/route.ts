@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireApiRole } from "@/lib/dashboardAuth/apiAuth";
 
 interface ZohoEmailItem {
   messageId: string;
@@ -11,7 +12,10 @@ interface ZohoEmailItem {
   folderId?: string;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = await requireApiRole(request, ["admin_ceo"]);
+  if (!auth.ok) return auth.response;
+
   const clientId = process.env.ZOHO_CLIENT_ID;
   const clientSecret = process.env.ZOHO_CLIENT_SECRET;
   const accountsBaseUrl = process.env.ZOHO_ACCOUNTS_BASE_URL;

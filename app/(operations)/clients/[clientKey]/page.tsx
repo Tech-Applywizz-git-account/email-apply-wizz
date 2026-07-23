@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { CooBadge, EmptyState, MetricCard, SectionBlock } from "@/components/coo";
+import { requireOperationsAccess } from "@/lib/dashboardAuth/requireOperationsAccess";
 import { getClientDetailWorkspaceData } from "@/lib/zoho/cooWorkspace";
 
 export const dynamic = "force-dynamic";
@@ -86,6 +87,8 @@ export default async function ClientDetailPage({
   params: Params;
   searchParams: SearchParams;
 }) {
+  await requireOperationsAccess();
+
   const [{ clientKey }, resolvedParams] = await Promise.all([params, searchParams]);
   const current = new URLSearchParams();
   const range = valueFrom(resolvedParams.range) ?? "today";

@@ -14,15 +14,14 @@ import { tryRegexExtract } from "@/lib/classify/regexExtractor";
 import { classifyWithAI } from "@/lib/classify/aiClassifier";
 import { extractOriginalRecipient } from "@/lib/classify/extractRecipient";
 import { sanitizeReason } from "@/lib/classify/sanitizeReason";
-import { refreshZohoToken, stripHtml } from "@/lib/zoho/zohoApiHelpers";
+import { needsZohoTokenRefresh, refreshZohoToken, stripHtml } from "@/lib/zoho/zohoApiHelpers";
 import {
   claimEmailsForClassification,
   getRetryDisposition,
   getSafeProcessingError,
   updateClaimedEmail,
 } from "@/lib/zoho/queueFoundation";
-// mapRecipientToClient is intentionally NOT used here: no real clients table exists in Supabase.
-// When a real clients table is migrated, import mapRecipientToClient and replace client_id: null.
+import { mapRecipientToClient, type ClientLookupSupabase } from "@/lib/zoho/mapRecipientToClient";
 
 const DETERMINISTIC_CONFIDENCE_THRESHOLD = 0.8;
 
@@ -189,8 +188,7 @@ async function runDryRun(cfg: {
   }
 
   let accessToken: string = connection.access_token;
-  const expiresAt = new Date(connection.access_token_expires_at).getTime();
-  if (expiresAt < Date.now() + 5 * 60 * 1000) {
+  if (needsZohoTokenRefresh(connection.access_token_expires_at)) {
     accessToken = await refreshZohoToken(
       connection as { zoho_account_id: string; refresh_token: string },
       cfg.clientId,
@@ -374,13 +372,11 @@ export async function classifyEmails(
     throw new Error("No active Zoho connection found. Please log in first.");
   }
 
-  // Refresh token if expired or near expiry
+  // Refresh token only after expiry; Zoho rejects repeated early refreshes.
   let accessToken: string = connection.access_token;
-  const expiresAt = new Date(connection.access_token_expires_at).getTime();
-  const bufferTime = 5 * 60 * 1000;
 
-  if (expiresAt < Date.now() + bufferTime) {
-    console.log("[Zoho Classify] Access token expired or near expiry. Refreshing...");
+  if (needsZohoTokenRefresh(connection.access_token_expires_at)) {
+    console.log("[Zoho Classify] Access token expired. Refreshing...");
     accessToken = await refreshZohoToken(
       connection as { zoho_account_id: string; refresh_token: string },
       clientId,
@@ -580,6 +576,26 @@ export async function classifyEmails(
         (classification as { reason?: string }).reason ?? null,
       );
       const finalizedAt = new Date().toISOString();
+
+      // Recipient → client mapping. Preserve a valid existing original_recipient,
+      // otherwise use the freshly extracted one. Mapping never blocks classification:
+      // on any error the email is still classified with client_id left null.
+      const existingRecipient =
+        typeof emailRecord.original_recipient === "string" && emailRecord.original_recipient.includes("@")
+          ? emailRecord.original_recipient
+          : null;
+      const effectiveRecipient = existingRecipient ?? routingResult.originalRecipient;
+      let mappedClientId: string | null = null;
+      try {
+        const mapping = await mapRecipientToClient(
+          supabase as unknown as ClientLookupSupabase,
+          effectiveRecipient,
+          routingResult.routingStatus,
+        );
+        mappedClientId = mapping.clientId;
+      } catch {
+        mappedClientId = null;
+      }
       const didUpdate = await updateClaimedEmail(
         supabase as unknown as Parameters<typeof updateClaimedEmail>[0],
         {
@@ -598,12 +614,12 @@ export async function classifyEmails(
             job_title: (classification as { job_title?: string | null }).job_title ?? null,
             reason: safeReason,
             classifier_source,
-            // routing fields — client_id always null until real clients table exists
-            original_recipient: routingResult.originalRecipient,
+            // routing fields — client_id resolved from the active clients table
+            original_recipient: effectiveRecipient,
             email_direction: routingResult.direction,
             routing_confidence: routingResult.routingConfidence,
             routing_status: routingResult.routingStatus,
-            client_id: null,
+            client_id: mappedClientId,
             classified_at: finalizedAt,
             classification_status: classification.needs_human_review ? "review" : "classified",
             next_retry_at: null,
