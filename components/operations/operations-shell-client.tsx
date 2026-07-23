@@ -63,6 +63,10 @@ function roleLabel(role: "admin_ceo" | "manager_ops" | "ca"): string {
   return "CA";
 }
 
+function canSeeBroadNav(role: "admin_ceo" | "manager_ops" | "ca"): boolean {
+  return role === "admin_ceo" || role === "manager_ops";
+}
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/u).filter(Boolean);
   if (parts.length === 0) return "??";
@@ -125,27 +129,33 @@ export function OperationsShellClient({
         </div>
 
         <nav className="sidebar-nav">
-          <NavLink
-            href="/overview"
-            icon={<IconOverview size={20} />}
-            label="Overview"
-          />
-          <NavLink
-            href="/live-monitor/email-arrival"
-            icon={<IconMail size={20} />}
-            label="Live Monitor"
-          />
-          <NavLink
-            href="/clients"
-            icon={<IconClients size={20} />}
-            label="Clients"
-          />
-          <NavLink href="/operations" icon={<IconMailboxes size={20} />} label="Operations" />
-          <NavLink
-            href="/review-queue"
-            icon={<IconReviewQueue size={20} />}
-            label="Review Queue"
-          />
+          {canSeeBroadNav(userRole) ? (
+            <>
+              <NavLink
+                href="/overview"
+                icon={<IconOverview size={20} />}
+                label="Overview"
+              />
+              <NavLink
+                href="/live-monitor/email-arrival"
+                icon={<IconMail size={20} />}
+                label="Live Monitor"
+              />
+              <NavLink
+                href="/clients"
+                icon={<IconClients size={20} />}
+                label="Clients"
+              />
+              <NavLink href="/operations" icon={<IconMailboxes size={20} />} label="Operations" />
+              <NavLink
+                href="/review-queue"
+                icon={<IconReviewQueue size={20} />}
+                label="Review Queue"
+              />
+            </>
+          ) : (
+            <NavLink href="/access-pending" icon={<IconOverview size={20} />} label="Access Pending" />
+          )}
         </nav>
 
         <div className="sidebar-footer">
@@ -213,31 +223,42 @@ export function OperationsShellClient({
               </button>
             </div>
             <nav className="drawer-nav">
-              <NavLink
-                href="/overview"
-                icon={<IconOverview size={20} />}
-                label="Overview"
-                onClick={() => setMobileMenuOpen(false)}
-              />
-              <NavLink
-                href="/live-monitor/email-arrival"
-                icon={<IconMail size={20} />}
-                label="Live Monitor"
-                onClick={() => setMobileMenuOpen(false)}
-              />
-              <NavLink
-                href="/clients"
-                icon={<IconClients size={20} />}
-                label="Clients"
-                onClick={() => setMobileMenuOpen(false)}
-              />
-              <NavLink href="/operations" icon={<IconMailboxes size={20} />} label="Operations" onClick={() => setMobileMenuOpen(false)} />
-              <NavLink
-                href="/review-queue"
-                icon={<IconReviewQueue size={20} />}
-                label="Review Queue"
-                onClick={() => setMobileMenuOpen(false)}
-              />
+              {canSeeBroadNav(userRole) ? (
+                <>
+                  <NavLink
+                    href="/overview"
+                    icon={<IconOverview size={20} />}
+                    label="Overview"
+                    onClick={() => setMobileMenuOpen(false)}
+                  />
+                  <NavLink
+                    href="/live-monitor/email-arrival"
+                    icon={<IconMail size={20} />}
+                    label="Live Monitor"
+                    onClick={() => setMobileMenuOpen(false)}
+                  />
+                  <NavLink
+                    href="/clients"
+                    icon={<IconClients size={20} />}
+                    label="Clients"
+                    onClick={() => setMobileMenuOpen(false)}
+                  />
+                  <NavLink href="/operations" icon={<IconMailboxes size={20} />} label="Operations" onClick={() => setMobileMenuOpen(false)} />
+                  <NavLink
+                    href="/review-queue"
+                    icon={<IconReviewQueue size={20} />}
+                    label="Review Queue"
+                    onClick={() => setMobileMenuOpen(false)}
+                  />
+                </>
+              ) : (
+                <NavLink
+                  href="/access-pending"
+                  icon={<IconOverview size={20} />}
+                  label="Access Pending"
+                  onClick={() => setMobileMenuOpen(false)}
+                />
+              )}
               <button
                 type="button"
                 className="drawer-logout-button"
@@ -275,30 +296,41 @@ export function OperationsShellClient({
 
       {/* ── Mobile Bottom Navigation Bar ── */}
       <div className="mobile-bottom-nav">
-        <Link href="/overview" className="bottom-nav-item">
-          <span className="nav-icon">
-            <IconOverview size={20} />
-          </span>
-          <span className="nav-text">Overview</span>
-        </Link>
-        <Link href="/clients" className="bottom-nav-item">
-          <span className="nav-icon">
-            <IconClients size={20} />
-          </span>
-          <span className="nav-text">Clients</span>
-        </Link>
-        <Link href="/operations" className="bottom-nav-item">
-          <span className="nav-icon">
-            <IconMailboxes size={20} />
-          </span>
-          <span className="nav-text">Operations</span>
-        </Link>
-        <Link href="/review-queue" className="bottom-nav-item">
-          <span className="nav-icon">
-            <IconReviewQueue size={20} />
-          </span>
-          <span className="nav-text">Review</span>
-        </Link>
+        {canSeeBroadNav(userRole) ? (
+          <>
+            <Link href="/overview" className="bottom-nav-item">
+              <span className="nav-icon">
+                <IconOverview size={20} />
+              </span>
+              <span className="nav-text">Overview</span>
+            </Link>
+            <Link href="/clients" className="bottom-nav-item">
+              <span className="nav-icon">
+                <IconClients size={20} />
+              </span>
+              <span className="nav-text">Clients</span>
+            </Link>
+            <Link href="/operations" className="bottom-nav-item">
+              <span className="nav-icon">
+                <IconMailboxes size={20} />
+              </span>
+              <span className="nav-text">Operations</span>
+            </Link>
+            <Link href="/review-queue" className="bottom-nav-item">
+              <span className="nav-icon">
+                <IconReviewQueue size={20} />
+              </span>
+              <span className="nav-text">Review</span>
+            </Link>
+          </>
+        ) : (
+          <Link href="/access-pending" className="bottom-nav-item">
+            <span className="nav-icon">
+              <IconOverview size={20} />
+            </span>
+            <span className="nav-text">Access Pending</span>
+          </Link>
+        )}
         <button
           type="button"
           className="bottom-nav-item bottom-nav-btn"

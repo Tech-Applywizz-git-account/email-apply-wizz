@@ -71,4 +71,26 @@ describe("OperationsShellClient", () => {
     expect(markup).toContain("Live Monitor");
     expect(markup).toContain("Review Queue");
   });
+
+  it("renders full operations navigation for admin_ceo and manager_ops but not for ca", async () => {
+    const { OperationsShellClient } = await import("./operations-shell-client");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+
+    const admin = renderToStaticMarkup(
+      <OperationsShellClient userName="Ramakrishna" userRole="admin_ceo">
+        <div>content</div>
+      </OperationsShellClient>,
+    );
+    expect(admin).toContain("Live Monitor");
+    expect(admin).toContain("Review Queue");
+
+    const ca = renderToStaticMarkup(
+      <OperationsShellClient userName="Navya" userRole="ca">
+        <div>content</div>
+      </OperationsShellClient>,
+    );
+    expect(ca).not.toContain("Live Monitor");
+    expect(ca).not.toContain("Review Queue");
+    expect(ca).not.toContain("Clients");
+  });
 });
