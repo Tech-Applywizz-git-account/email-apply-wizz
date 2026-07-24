@@ -198,4 +198,39 @@ describe("syncCaAssignments", () => {
     expect(select).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
   });
+
+  it("select error during reconciliation skips deactivation and returns ok:true, deactivated_count:0", async () => {
+    fetchCaCapacity.mockResolvedValue([
+      { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
+    ]);
+    const { supabase, updateCalls } = makeSupabase({
+      activeRows: [{ ca_id: "id-1" }, { ca_id: "id-2" }],
+      selectError: { message: "Database query error" },
+    });
+    const { syncCaAssignments } = await import("./syncCaAssignments");
+
+    const report = await syncCaAssignments(supabase as never);
+
+    expect(report.ok).toBe(true);
+    expect(report.deactivated_count).toBe(0);
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("update error during reconciliation fails to deactivate but returns ok:true, deactivated_count:0", async () => {
+    fetchCaCapacity.mockResolvedValue([
+      { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
+    ]);
+    const { supabase, updateCalls } = makeSupabase({
+      activeRows: [{ ca_id: "id-1" }, { ca_id: "id-2" }],
+      updateError: { message: "Database update error" },
+    });
+    const { syncCaAssignments } = await import("./syncCaAssignments");
+
+    const report = await syncCaAssignments(supabase as never);
+
+    expect(report.ok).toBe(true);
+    expect(report.deactivated_count).toBe(0);
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].ids).toEqual(["id-2"]);
+  });
 });
