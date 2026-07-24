@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getLeadByEmail } from "@/lib/leadsApi/getLeadByEmail";
+import { getAllowedCaEmailsForManager } from "@/lib/managerMapping/getAllowedCaEmails";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/serviceRole";
 
 export const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -49,6 +50,11 @@ export interface LiveMonitorEmailRow {
 
 export type GetRecentEmailActivityResult = { ok: true; rows: LiveMonitorEmailRow[] } | { ok: false };
 
+export interface RecentActivityScope {
+  role: "admin_ceo" | "manager_ops" | "ca";
+  email: string;
+}
+
 const RECENT_ACTIVITY_LIMIT = 50;
 
 // Narrow local types: this repo has no generated Supabase types, and the embedded
@@ -81,7 +87,7 @@ interface RecentActivitySupabase {
   };
 }
 
-export async function getRecentEmailActivity(): Promise<GetRecentEmailActivityResult> {
+export async function getRecentEmailActivity(scope: RecentActivityScope): Promise<GetRecentEmailActivityResult> {
   try {
     const supabase = createSupabaseServiceRoleClient() as unknown as RecentActivitySupabase;
 
@@ -97,22 +103,38 @@ export async function getRecentEmailActivity(): Promise<GetRecentEmailActivityRe
 
     if (error || !data) return { ok: false };
 
-    const rows: LiveMonitorEmailRow[] = data.map((row) => {
-      const relation = Array.isArray(row.clients) ? (row.clients[0] ?? null) : row.clients;
-      return {
-        id: String(row.id),
-        sender: row.sender ?? null,
-        subject: row.subject ?? null,
-        originalRecipient: row.original_recipient ?? null,
-        receivedAt: row.received_at ?? null,
-        classificationStatus: row.classification_status ?? null,
-        category: row.category ?? null,
-        clientId: row.client_id ?? null,
-        clientName: relation?.client_name ?? null,
-        assignedCaName: relation?.assigned_ca_name ?? null,
-        assignedCaEmail: relation?.assigned_ca_email ?? null,
-      };
-    });
+    // admin_ceo is the ONLY unfiltered role. Every other role (including any
+    // unexpected value that shouldn't reach here in practice, since `ca` is
+    // already blocked by requireOperationsAccess()) is scoped through the
+    // manager lookup, which safely yields an empty set — and therefore zero
+    // rows below — for any email with no manager_ca_assignments rows.
+    let allowedCaEmails: Set<string> | null = null;
+    if (scope.role !== "admin_ceo") {
+      allowedCaEmails = await getAllowedCaEmailsForManager(scope.email);
+    }
+
+    const rows: LiveMonitorEmailRow[] = data
+      .map((row) => {
+        const relation = Array.isArray(row.clients) ? (row.clients[0] ?? null) : row.clients;
+        return {
+          id: String(row.id),
+          sender: row.sender ?? null,
+          subject: row.subject ?? null,
+          originalRecipient: row.original_recipient ?? null,
+          receivedAt: row.received_at ?? null,
+          classificationStatus: row.classification_status ?? null,
+          category: row.category ?? null,
+          clientId: row.client_id ?? null,
+          clientName: relation?.client_name ?? null,
+          assignedCaName: relation?.assigned_ca_name ?? null,
+          assignedCaEmail: relation?.assigned_ca_email ?? null,
+        };
+      })
+      .filter((row) => {
+        if (!allowedCaEmails) return true; // admin_ceo: unfiltered
+        const caEmail = row.assignedCaEmail?.toLowerCase();
+        return !!caEmail && allowedCaEmails.has(caEmail);
+      });
 
     return { ok: true, rows };
   } catch {

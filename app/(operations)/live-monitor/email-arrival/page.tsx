@@ -7,15 +7,15 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function EmailArrivalMonitorPage() {
-  await requireOperationsAccess();
+  const session = await requireOperationsAccess();
 
   // NOTE: this page intentionally has TWO separate data sources (temporary — do not
   // unify in Step 3):
   //   1. The mailbox daily summary below uses the Leads API (getEmailArrivalMonitorData).
   //   2. The "Recent Email Activity" per-email table uses the Supabase `clients`
-  //      relation (getRecentEmailActivity).
+  //      relation (getRecentEmailActivity), scoped to the signed-in manager's CAs.
   const result = await getEmailArrivalMonitorData();
-  const recent = await getRecentEmailActivity();
+  const recent = await getRecentEmailActivity({ role: session.user.role, email: session.user.email });
 
   return (
     <main className="coo-page coo-live-monitor-page">
