@@ -118,4 +118,35 @@ describe("OperationsShellClient", () => {
     // Access Pending there), this count would drop below 3.
     expect(ca.split("Access Pending").length - 1).toBe(3);
   });
+
+  it("renders a My Team nav link on all three surfaces for admin_ceo and manager_ops but not for ca", async () => {
+    const { OperationsShellClient } = await import("./operations-shell-client");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+
+    const admin = renderToStaticMarkup(
+      <OperationsShellClient userName="Ramakrishna" userRole="admin_ceo">
+        <div>content</div>
+      </OperationsShellClient>,
+    );
+    // sidebar-nav + drawer-nav each render the label twice (aria-label +
+    // visible span), but drawer-nav is not in the static markup since
+    // mobileMenuOpen starts false — so sidebar-nav alone contributes 2, plus
+    // mobile-bottom-nav's own "My Team" nav-text span contributes 1.
+    expect(admin.split("My Team").length - 1).toBe(3);
+    expect(admin).toContain('<span class="nav-text">My Team</span>');
+
+    const manager = renderToStaticMarkup(
+      <OperationsShellClient userName="Balaji" userRole="manager_ops">
+        <div>content</div>
+      </OperationsShellClient>,
+    );
+    expect(manager).toContain("My Team");
+
+    const ca = renderToStaticMarkup(
+      <OperationsShellClient userName="Navya" userRole="ca">
+        <div>content</div>
+      </OperationsShellClient>,
+    );
+    expect(ca).not.toContain("My Team");
+  });
 });
