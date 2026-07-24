@@ -15,7 +15,9 @@ interface CaAssignmentRow {
 interface MyTeamSupabase {
   from(table: "manager_ca_assignments"): {
     select(columns: string): {
-      eq(column: string, value: string): Promise<{ data: CaAssignmentRow[] | null; error: { message: string } | null }>;
+      eq(column: string, value: string | boolean): {
+        eq(column: string, value: string): Promise<{ data: CaAssignmentRow[] | null; error: { message: string } | null }>;
+      } & Promise<{ data: CaAssignmentRow[] | null; error: { message: string } | null }>;
     } & Promise<{ data: CaAssignmentRow[] | null; error: { message: string } | null }>;
   };
 }
@@ -24,7 +26,10 @@ export default async function MyTeamPage() {
   const session = await requireOperationsAccess();
   const supabase = createSupabaseServiceRoleClient() as unknown as MyTeamSupabase;
 
-  const query = supabase.from("manager_ca_assignments").select("ca_name, ca_email, system_name, designation, team_name");
+  const query = supabase
+    .from("manager_ca_assignments")
+    .select("ca_name, ca_email, system_name, designation, team_name")
+    .eq("is_active", true);
   const { data, error } =
     session.user.role === "admin_ceo" ? await query : await query.eq("manager_email", session.user.email);
 
