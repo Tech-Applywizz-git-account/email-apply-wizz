@@ -26,6 +26,33 @@ describe("getAllowedCaEmailsForManager", () => {
     );
   });
 
+  it("normalizes a mixed-case manager email before querying, and normalizes returned ca_email casing", async () => {
+    let capturedManagerEmail = "";
+    createSupabaseServiceRoleClient.mockReturnValue({
+      from: () => ({
+        select: () => ({
+          eq: (column: string, value: string) => {
+            if (column === "manager_email") {
+              capturedManagerEmail = value;
+            }
+            return {
+              eq: () =>
+                Promise.resolve({
+                  data: [{ ca_email: "A@ApplyWizz.Com" }, { ca_email: "  B@applywizz.AI  " }],
+                  error: null,
+                }),
+            };
+          },
+        }),
+      }),
+    });
+    const { getAllowedCaEmailsForManager } = await import("./getAllowedCaEmails");
+    await expect(
+      getAllowedCaEmailsForManager("  RAMAKRISHNAA.TEJAVATH@APPLYWIZZ.AI  "),
+    ).resolves.toEqual(new Set(["a@applywizz.com", "b@applywizz.ai"]));
+    expect(capturedManagerEmail).toBe("ramakrishnaa.tejavath@applywizz.ai");
+  });
+
   it("returns an empty set (fail closed) when the manager has no mapped CAs", async () => {
     mockSupabaseReturning([]);
     const { getAllowedCaEmailsForManager } = await import("./getAllowedCaEmails");

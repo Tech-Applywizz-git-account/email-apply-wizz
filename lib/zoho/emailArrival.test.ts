@@ -360,6 +360,45 @@ describe("getRecentEmailActivity", () => {
     expect(getAllowedCaEmailsForManagerMock).toHaveBeenCalledWith("balaji@applywizz.ai");
   });
 
+  it("normalizes a mixed-case scope.email and mixed-case assigned_ca_email so casing mismatches still match", async () => {
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set(["assigned-to-balaji@applywizz.com"]));
+    const activity = makeActivitySupabase([
+      {
+        id: "e1",
+        sender: "recruiter@northstar.example.test",
+        subject: "Interview invite",
+        original_recipient: "client-one@applywizard.ai",
+        received_at: "2026-07-13T10:00:00.000Z",
+        classification_status: "classified",
+        category: "interview_invite",
+        client_id: "c1",
+        clients: { client_name: "Client One", assigned_ca_name: "Balaji", assigned_ca_email: "Assigned-To-Balaji@ApplyWizz.COM" },
+      },
+      {
+        id: "e2",
+        sender: "recruiter@southstar.example.test",
+        subject: "Application received",
+        original_recipient: "client-two@applywizard.ai",
+        received_at: "2026-07-13T09:00:00.000Z",
+        classification_status: "classified",
+        category: "application_confirmation",
+        client_id: "c2",
+        clients: { client_name: "Client Two", assigned_ca_name: "Someone Else", assigned_ca_email: "someone-else@applywizz.com" },
+      },
+    ]);
+    mockSupabase = activity as unknown as typeof mockSupabase;
+
+    const { getRecentEmailActivity } = await import("./emailArrival");
+    const result = await getRecentEmailActivity({ role: "manager_ops", email: "  BALAJI@APPLYWIZZ.AI  " });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]?.id).toBe("e1");
+    }
+    expect(getAllowedCaEmailsForManagerMock).toHaveBeenCalledWith("balaji@applywizz.ai");
+  });
+
   it("manager_ops with no mapped CAs sees zero rows (fails closed, not everything)", async () => {
     getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set());
     const activity = makeActivitySupabase([

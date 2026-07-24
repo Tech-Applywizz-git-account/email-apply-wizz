@@ -1,4 +1,5 @@
 import { requireOperationsAccess } from "@/lib/dashboardAuth/requireOperationsAccess";
+import { normalizeEmail } from "@/lib/managerMapping/normalizeEmail";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/serviceRole";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ export default async function MyTeamPage() {
     .select("ca_name, ca_email, system_name, designation, team_name")
     .eq("is_active", true);
   const { data, error } =
-    session.user.role === "admin_ceo" ? await query : await query.eq("manager_email", session.user.email);
+    session.user.role === "admin_ceo" ? await query : await query.eq("manager_email", normalizeEmail(session.user.email));
 
   const rows = error || !data ? [] : data;
 

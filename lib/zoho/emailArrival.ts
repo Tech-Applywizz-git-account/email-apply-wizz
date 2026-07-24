@@ -2,6 +2,7 @@ import "server-only";
 
 import { getLeadByEmail } from "@/lib/leadsApi/getLeadByEmail";
 import { getAllowedCaEmailsForManager } from "@/lib/managerMapping/getAllowedCaEmails";
+import { normalizeEmail } from "@/lib/managerMapping/normalizeEmail";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/serviceRole";
 
 export const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -124,7 +125,7 @@ export async function getRecentEmailActivity(scope: RecentActivityScope): Promis
     // rows below — for any email with no manager_ca_assignments rows.
     let allowedCaEmails: Set<string> | null = null;
     if (scope.role !== "admin_ceo") {
-      allowedCaEmails = await getAllowedCaEmailsForManager(scope.email);
+      allowedCaEmails = await getAllowedCaEmailsForManager(normalizeEmail(scope.email));
     }
 
     const rows: LiveMonitorEmailRow[] = data
@@ -146,7 +147,7 @@ export async function getRecentEmailActivity(scope: RecentActivityScope): Promis
       })
       .filter((row) => {
         if (!allowedCaEmails) return true; // admin_ceo: unfiltered
-        const caEmail = row.assignedCaEmail?.toLowerCase();
+        const caEmail = row.assignedCaEmail ? normalizeEmail(row.assignedCaEmail) : null;
         return !!caEmail && allowedCaEmails.has(caEmail);
       })
       // For scoped (non-admin) roles the filter above runs on the wider

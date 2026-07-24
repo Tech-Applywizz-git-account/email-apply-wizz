@@ -1,5 +1,6 @@
 import "server-only";
 
+import { normalizeEmail } from "@/lib/managerMapping/normalizeEmail";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/serviceRole";
 
 interface AllowedCaSupabase {
@@ -23,11 +24,11 @@ export async function getAllowedCaEmailsForManager(managerEmail: string): Promis
     const { data, error } = await supabase
       .from("manager_ca_assignments")
       .select("ca_email")
-      .eq("manager_email", managerEmail)
+      .eq("manager_email", normalizeEmail(managerEmail))
       .eq("is_active", true);
 
     if (error || !data) return new Set();
-    return new Set(data.map((row) => row.ca_email.toLowerCase()));
+    return new Set(data.map((row) => normalizeEmail(row.ca_email)));
   } catch {
     return new Set();
   }
