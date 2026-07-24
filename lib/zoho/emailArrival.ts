@@ -29,11 +29,17 @@ export interface EmailArrivalMonitorData {
   activeMailboxesToday: number;
 }
 
-// ── Recent Email Activity (Live Monitor V1 per-email view) ──────────────────────
-// Intentionally a SEPARATE data source from the mailbox summary above: the summary
-// derives client/CA from the Leads API (getLeadByEmail), while this per-email view
-// derives client/CA from the Supabase `clients` relation (FK zoho_email_metadata
-// .client_id → clients.id). The two are deliberately not unified in Step 3.
+// ── Recent Email Activity (secondary, supplementary per-message table) ──────────
+// This is a SEPARATE data source from the mailbox-level summary built by
+// getEmailArrivalMonitorData below: the mailbox summary is the original, approved
+// Live Monitor ("Email Arrival by Client Mailbox" — Total Emails Today / Latest
+// Email Time / Active Mailboxes Today) and derives client/CA per mailbox from the
+// Leads API (getLeadByEmail); it is the primary manager-scoped Live Monitor surface.
+// This per-email view instead derives client/CA from the Supabase `clients` relation
+// (FK zoho_email_metadata.client_id → clients.id). It was scoped by manager in an
+// earlier task, but that scoping only covers this supplementary table — it must not
+// be described as having completed Live Monitor manager scoping on its own. The two
+// data sources are deliberately not unified in Step 3.
 
 export interface LiveMonitorEmailRow {
   id: string;
@@ -196,7 +202,17 @@ export function formatIstTime(value: string | null): string {
   }).format(new Date(value));
 }
 
-export async function getEmailArrivalMonitorData(now = new Date()): Promise<GetEmailArrivalMonitorResult> {
+// The original, approved Live Monitor: mailbox-level daily summary (Total Emails
+// Today / Latest Email Time / Active Mailboxes Today, and the "Email Arrival by
+// Client Mailbox" table). This is the primary manager-scoped Live Monitor surface —
+// scope follows the same fail-closed convention as getRecentEmailActivity above:
+// admin_ceo is unfiltered, every other role is restricted to mailboxes whose
+// assignedCaEmail resolves (via getAllowedCaEmailsForManager) to one of the
+// signed-in manager's own CAs.
+export async function getEmailArrivalMonitorData(
+  scope: RecentActivityScope,
+  now = new Date(),
+): Promise<GetEmailArrivalMonitorResult> {
   try {
     const supabase = createSupabaseServiceRoleClient() as unknown as SupabaseLike;
     const { startUtc, endUtc } = getIstDayBounds(now);
@@ -242,15 +258,36 @@ export async function getEmailArrivalMonitorData(now = new Date()): Promise<GetE
       })),
     );
 
-    const totalEmailsToday = rowsWithLeads.reduce((sum, row) => sum + row.emailsToday, 0);
+    // admin_ceo is the ONLY unfiltered role, same fail-closed convention as
+    // getRecentEmailActivity: any other role value (including unexpected ones)
+    // is scoped through the manager lookup, which safely yields an empty set
+    // (and therefore zero rows) for any email with no manager_ca_assignments
+    // rows. The "-" fallback sentinel (no Leads API match) never appears in a
+    // manager's allowed-CA set, so it naturally never passes this filter.
+    let allowedCaEmails: Set<string> | null = null;
+    if (scope.role !== "admin_ceo") {
+      allowedCaEmails = await getAllowedCaEmailsForManager(normalizeEmail(scope.email));
+    }
+
+    const scopedRows = allowedCaEmails
+      ? rowsWithLeads.filter((row) => {
+          const caEmail = row.assignedCaEmail ? normalizeEmail(row.assignedCaEmail) : null;
+          return !!caEmail && allowedCaEmails.has(caEmail);
+        })
+      : rowsWithLeads;
+
+    // Totals are recomputed from the (possibly filtered) scopedRows, never from
+    // the original unfiltered rowsWithLeads, so a manager's aggregates reflect
+    // only their own team's mailboxes.
+    const totalEmailsToday = scopedRows.reduce((sum, row) => sum + row.emailsToday, 0);
 
     return {
       ok: true,
       data: {
-        rows: rowsWithLeads,
+        rows: scopedRows,
         totalEmailsToday,
-        latestEmailAt: rowsWithLeads[0]?.latestEmailAt ?? null,
-        activeMailboxesToday: rowsWithLeads.length,
+        latestEmailAt: scopedRows[0]?.latestEmailAt ?? null,
+        activeMailboxesToday: scopedRows.length,
       },
     };
   } catch {

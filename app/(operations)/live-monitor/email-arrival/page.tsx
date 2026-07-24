@@ -11,11 +11,19 @@ export default async function EmailArrivalMonitorPage() {
 
   // NOTE: this page intentionally has TWO separate data sources (temporary — do not
   // unify in Step 3):
-  //   1. The mailbox daily summary below uses the Leads API (getEmailArrivalMonitorData).
-  //   2. The "Recent Email Activity" per-email table uses the Supabase `clients`
-  //      relation (getRecentEmailActivity), scoped to the signed-in manager's CAs.
-  const result = await getEmailArrivalMonitorData();
-  const recent = await getRecentEmailActivity({ role: session.user.role, email: session.user.email });
+  //   1. The mailbox-level daily summary below ("Email Arrival by Client Mailbox",
+  //      plus the Total Emails Today / Latest Email Time / Active Mailboxes Today
+  //      metrics) is the original, approved Live Monitor. It uses the Leads API
+  //      (getEmailArrivalMonitorData) and is the primary manager-scoped surface,
+  //      scoped to the signed-in manager's allowed CAs.
+  //   2. The "Recent Email Activity" per-email table is a secondary, supplementary
+  //      view that uses the Supabase `clients` relation (getRecentEmailActivity).
+  //      It is also scoped to the signed-in manager's CAs, but that scoping is not
+  //      a substitute for — and must not be described as satisfying — the
+  //      mailbox-level Live Monitor scoping in section 1 above.
+  const scope = { role: session.user.role, email: session.user.email };
+  const result = await getEmailArrivalMonitorData(scope);
+  const recent = await getRecentEmailActivity(scope);
 
   return (
     <main className="coo-page coo-live-monitor-page">
