@@ -68,7 +68,7 @@ vi.mock("@/lib/leadsApi/getLeadByEmail", () => ({
   getLeadByEmail: getLeadByEmailMock,
 }));
 
-const getAllowedCaEmailsForManagerMock = vi.fn(async () => new Set<string>());
+const getAllowedCaEmailsForManagerMock = vi.fn(async (_managerEmail: string) => new Set<string>());
 
 vi.mock("@/lib/managerMapping/getAllowedCaEmails", () => ({
   getAllowedCaEmailsForManager: (managerEmail: string) => getAllowedCaEmailsForManagerMock(managerEmail),

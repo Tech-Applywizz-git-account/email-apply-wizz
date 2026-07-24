@@ -130,6 +130,40 @@ describe("syncCaAssignments", () => {
     expect(updateCalls[0].ids).toEqual(["id-2"]);
   });
 
+  it("safety threshold: skips deactivation when a run would remove more than half of active CAs (partial/incomplete pull)", async () => {
+    fetchCaCapacity.mockResolvedValue([
+      { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
+    ]);
+    const { supabase, updateCalls } = makeSupabase({
+      activeRows: [{ ca_id: "id-1" }, { ca_id: "id-2" }, { ca_id: "id-3" }, { ca_id: "id-4" }],
+    });
+    const { syncCaAssignments } = await import("./syncCaAssignments");
+
+    const report = await syncCaAssignments(supabase as never);
+
+    expect(report.deactivated_count).toBe(0);
+    expect(report.ok).toBe(true);
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("safety threshold: proceeds with deactivation when a run would remove under half of active CAs (ordinary turnover)", async () => {
+    fetchCaCapacity.mockResolvedValue([
+      { ca_id: "id-1", name: "Valid CA 1", email: "valid1@applywizz.com", team_name: "Balaji Team" },
+      { ca_id: "id-2", name: "Valid CA 2", email: "valid2@applywizz.com", team_name: "Balaji Team" },
+      { ca_id: "id-3", name: "Valid CA 3", email: "valid3@applywizz.com", team_name: "Balaji Team" },
+    ]);
+    const { supabase, updateCalls } = makeSupabase({
+      activeRows: [{ ca_id: "id-1" }, { ca_id: "id-2" }, { ca_id: "id-3" }, { ca_id: "id-4" }],
+    });
+    const { syncCaAssignments } = await import("./syncCaAssignments");
+
+    const report = await syncCaAssignments(supabase as never);
+
+    expect(report.deactivated_count).toBe(1);
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].ids).toEqual(["id-4"]);
+  });
+
   it("transfer: a CA moving teams gets its manager_name/manager_email overwritten on upsert", async () => {
     fetchCaCapacity.mockResolvedValue([
       { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },

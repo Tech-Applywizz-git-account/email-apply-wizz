@@ -30,6 +30,15 @@ export interface CaSyncReport {
   errorCode?: string;
 }
 
+// ponytail: no real "is this pull complete" signal exists from the Router
+// API, so this is a coarse guardrail — if a single run would deactivate
+// more than this fraction of currently-active CAs, treat it as an
+// incomplete/partial pull rather than a genuine mass offboarding, and skip
+// reconciliation for this run (self-corrects on the next complete pull).
+// Raise/lower if a real completeness signal becomes available, or if a
+// legitimate bulk offboarding event needs to clear this threshold in one run.
+const MAX_DEACTIVATION_FRACTION = 0.5;
+
 /**
  * Fetches the CA capacity API, normalizes each record (dropping unmapped
  * teams and malformed rows), and upserts the rest keyed on ca_id — safe to
@@ -100,7 +109,11 @@ export async function syncCaAssignments(supabase: SyncSupabase): Promise<CaSyncR
       .map((row) => row.ca_id)
       .filter((caId) => !validCaIds.has(caId));
 
-    if (staleIds.length > 0) {
+    const rows = activeRows ?? [];
+    const wouldExceedThreshold =
+      rows.length > 0 && staleIds.length / rows.length > MAX_DEACTIVATION_FRACTION;
+
+    if (!wouldExceedThreshold && staleIds.length > 0) {
       const { error: deactivateError } = await supabase
         .from("manager_ca_assignments")
         .update({ is_active: false })
