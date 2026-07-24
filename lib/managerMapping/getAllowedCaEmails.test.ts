@@ -45,4 +45,12 @@ describe("getAllowedCaEmailsForManager", () => {
     const { getAllowedCaEmailsForManager } = await import("./getAllowedCaEmails");
     await expect(getAllowedCaEmailsForManager("balaji@applywizz.ai")).resolves.toEqual(new Set());
   });
+
+  it("returns an empty set (fail closed) when creating the Supabase client throws, never throws", async () => {
+    createSupabaseServiceRoleClient.mockImplementation(() => {
+      throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY");
+    });
+    const { getAllowedCaEmailsForManager } = await import("./getAllowedCaEmails");
+    await expect(getAllowedCaEmailsForManager("balaji@applywizz.ai")).resolves.toEqual(new Set());
+  });
 });
