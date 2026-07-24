@@ -68,9 +68,19 @@ vi.mock("@/lib/leadsApi/getLeadByEmail", () => ({
   getLeadByEmail: getLeadByEmailMock,
 }));
 
+const getAllowedCaEmailsForManagerMock = vi.fn(async (_managerEmail: string) => new Set<string>());
+
+vi.mock("@/lib/managerMapping/getAllowedCaEmails", () => ({
+  getAllowedCaEmailsForManager: (managerEmail: string) => getAllowedCaEmailsForManagerMock(managerEmail),
+}));
+
 describe("getEmailArrivalMonitorData", () => {
+  const adminScope = { role: "admin_ceo" as const, email: "admin@applywizz.ai" };
+
   beforeEach(() => {
     getLeadByEmailMock.mockClear();
+    getAllowedCaEmailsForManagerMock.mockClear();
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set());
     mockSupabase = makeSupabase([
       { original_recipient: "b@example.test", received_at: "2026-07-09T11:00:00.000Z" },
       { original_recipient: "a@example.test", received_at: "2026-07-09T10:00:00.000Z" },
@@ -80,9 +90,9 @@ describe("getEmailArrivalMonitorData", () => {
     ]);
   });
 
-  it("groups arrivals by mailbox within the IST day and sorts by latest email", async () => {
+  it("groups arrivals by mailbox within the IST day and sorts by latest email (admin_ceo, unfiltered)", async () => {
     const { getEmailArrivalMonitorData, getIstDayBounds } = await import("./emailArrival");
-    const result = await getEmailArrivalMonitorData(new Date("2026-07-09T06:30:00.000Z"));
+    const result = await getEmailArrivalMonitorData(adminScope, new Date("2026-07-09T06:30:00.000Z"));
 
     expect(getIstDayBounds(new Date("2026-07-09T06:30:00.000Z"))).toEqual({
       startUtc: "2026-07-08T18:30:00.000Z",
@@ -117,6 +127,7 @@ describe("getEmailArrivalMonitorData", () => {
       expect(getLeadByEmailMock).toHaveBeenCalledTimes(2);
       expect(getLeadByEmailMock).toHaveBeenCalledWith("b@example.test");
       expect(getLeadByEmailMock).toHaveBeenCalledWith("a@example.test");
+      expect(getAllowedCaEmailsForManagerMock).not.toHaveBeenCalled();
     }
   });
 
@@ -124,7 +135,7 @@ describe("getEmailArrivalMonitorData", () => {
     mockSupabase = makeSupabase([]);
 
     const { getEmailArrivalMonitorData } = await import("./emailArrival");
-    const result = await getEmailArrivalMonitorData(new Date("2026-07-09T06:30:00.000Z"));
+    const result = await getEmailArrivalMonitorData(adminScope, new Date("2026-07-09T06:30:00.000Z"));
 
     expect(result).toEqual({
       ok: true,
@@ -136,6 +147,110 @@ describe("getEmailArrivalMonitorData", () => {
       },
     });
     expect(getLeadByEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("a manager_ops scope sees only mailboxes whose assignedCaEmail is in their allowed set, with totals recomputed from the filtered subset", async () => {
+    // Unfiltered (admin) totals from the shared beforeEach fixture: 3 emails,
+    // 2 active mailboxes, latest = b@example.test at 11:00. Allowing only the
+    // CA mapped to a@example.test (assignedCaEmail = "ca-a@example.test", per
+    // getLeadByEmailMock) must drop b@example.test and recompute totals from
+    // a@example.test alone: 2 emails, 1 mailbox, latest = 10:00 — all three
+    // aggregates differ from the unfiltered admin values.
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set(["ca-a@example.test"]));
+
+    const { getEmailArrivalMonitorData } = await import("./emailArrival");
+    const result = await getEmailArrivalMonitorData(
+      { role: "manager_ops", email: "manager@applywizz.ai" },
+      new Date("2026-07-09T06:30:00.000Z"),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.rows).toEqual([
+        {
+          originalRecipient: "a@example.test",
+          clientName: "Client a@example.test",
+          assignedCaName: "CA a@example.test",
+          assignedCaEmail: "ca-a@example.test",
+          emailsToday: 2,
+          latestEmailAt: "2026-07-09T10:00:00.000Z",
+        },
+      ]);
+      expect(result.data.totalEmailsToday).toBe(2);
+      expect(result.data.activeMailboxesToday).toBe(1);
+      expect(result.data.latestEmailAt).toBe("2026-07-09T10:00:00.000Z");
+    }
+    expect(getAllowedCaEmailsForManagerMock).toHaveBeenCalledWith("manager@applywizz.ai");
+  });
+
+  it("excludes a mailbox with the '-' fallback sentinel (no Leads API match) for a manager_ops scope but keeps it for admin_ceo", async () => {
+    mockSupabase = makeSupabase([{ original_recipient: "unmatched@example.test", received_at: "2026-07-09T10:00:00.000Z" }]);
+    getLeadByEmailMock.mockImplementationOnce(async () => ({
+      clientName: "Unmatched",
+      assignedCaName: "Not mapped",
+      assignedCaEmail: "-",
+    }));
+
+    const { getEmailArrivalMonitorData } = await import("./emailArrival");
+    const adminResult = await getEmailArrivalMonitorData(adminScope, new Date("2026-07-09T06:30:00.000Z"));
+
+    expect(adminResult.ok).toBe(true);
+    if (adminResult.ok) {
+      expect(adminResult.data.rows).toHaveLength(1);
+      expect(adminResult.data.rows[0]?.assignedCaEmail).toBe("-");
+      expect(adminResult.data.totalEmailsToday).toBe(1);
+    }
+
+    // Fresh fixture + fresh fallback response for the manager_ops call.
+    mockSupabase = makeSupabase([{ original_recipient: "unmatched@example.test", received_at: "2026-07-09T10:00:00.000Z" }]);
+    getLeadByEmailMock.mockImplementationOnce(async () => ({
+      clientName: "Unmatched",
+      assignedCaName: "Not mapped",
+      assignedCaEmail: "-",
+    }));
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set(["some-other-ca@example.test"]));
+
+    const managerResult = await getEmailArrivalMonitorData(
+      { role: "manager_ops", email: "manager@applywizz.ai" },
+      new Date("2026-07-09T06:30:00.000Z"),
+    );
+
+    expect(managerResult).toEqual({
+      ok: true,
+      data: { rows: [], totalEmailsToday: 0, latestEmailAt: null, activeMailboxesToday: 0 },
+    });
+  });
+
+  it("yields zero mailbox rows and zero aggregate totals (not a crash) for a manager scope with no allowed CAs", async () => {
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set());
+
+    const { getEmailArrivalMonitorData } = await import("./emailArrival");
+    const result = await getEmailArrivalMonitorData(
+      { role: "manager_ops", email: "unmapped-manager@applywizz.ai" },
+      new Date("2026-07-09T06:30:00.000Z"),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: { rows: [], totalEmailsToday: 0, latestEmailAt: null, activeMailboxesToday: 0 },
+    });
+    expect(getAllowedCaEmailsForManagerMock).toHaveBeenCalledWith("unmapped-manager@applywizz.ai");
+  });
+
+  it("treats an unexpected role value (e.g. ca) as scoped and fails closed, not unfiltered", async () => {
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set());
+
+    const { getEmailArrivalMonitorData } = await import("./emailArrival");
+    const result = await getEmailArrivalMonitorData(
+      { role: "ca", email: "some-ca@applywizz.ai" },
+      new Date("2026-07-09T06:30:00.000Z"),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: { rows: [], totalEmailsToday: 0, latestEmailAt: null, activeMailboxesToday: 0 },
+    });
+    expect(getAllowedCaEmailsForManagerMock).toHaveBeenCalledWith("some-ca@applywizz.ai");
   });
 });
 
@@ -160,7 +275,10 @@ function makeActivitySupabase(rows: MockRow[] | "error") {
                   return Promise.resolve(
                     rows === "error"
                       ? { data: null, error: { message: "boom" } }
-                      : { data: rows, error: null },
+                      // Mirrors real Supabase: the DB truncates to `count` rows
+                      // (already ordered newest-first by the caller) before the
+                      // in-app CA filter ever runs.
+                      : { data: rows.slice(0, count), error: null },
                   );
                 },
               };
@@ -174,12 +292,19 @@ function makeActivitySupabase(rows: MockRow[] | "error") {
 }
 
 describe("getRecentEmailActivity", () => {
+  const adminScope = { role: "admin_ceo" as const, email: "ramakrishna@applywizz.ai" };
+
+  beforeEach(() => {
+    getAllowedCaEmailsForManagerMock.mockClear();
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set());
+  });
+
   it("selects the clients relation and safe columns only (no message body), newest first", async () => {
     const activity = makeActivitySupabase([]);
     mockSupabase = activity as unknown as typeof mockSupabase;
 
     const { getRecentEmailActivity } = await import("./emailArrival");
-    const result = await getRecentEmailActivity();
+    const result = await getRecentEmailActivity(adminScope);
 
     expect(result).toEqual({ ok: true, rows: [] });
     expect(activity.capture.columns).toContain("clients(client_name, assigned_ca_name, assigned_ca_email)");
@@ -205,7 +330,7 @@ describe("getRecentEmailActivity", () => {
     mockSupabase = activity as unknown as typeof mockSupabase;
 
     const { getRecentEmailActivity } = await import("./emailArrival");
-    const result = await getRecentEmailActivity();
+    const result = await getRecentEmailActivity(adminScope);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -242,7 +367,7 @@ describe("getRecentEmailActivity", () => {
     mockSupabase = activity as unknown as typeof mockSupabase;
 
     const { getRecentEmailActivity } = await import("./emailArrival");
-    const result = await getRecentEmailActivity();
+    const result = await getRecentEmailActivity(adminScope);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -265,6 +390,230 @@ describe("getRecentEmailActivity", () => {
     mockSupabase = activity as unknown as typeof mockSupabase;
 
     const { getRecentEmailActivity } = await import("./emailArrival");
-    await expect(getRecentEmailActivity()).resolves.toEqual({ ok: false });
+    await expect(getRecentEmailActivity(adminScope)).resolves.toEqual({ ok: false });
+  });
+
+  it("admin_ceo sees all rows regardless of assigned CA", async () => {
+    const activity = makeActivitySupabase([
+      {
+        id: "e1",
+        sender: "recruiter@northstar.example.test",
+        subject: "Interview invite",
+        original_recipient: "client-one@applywizard.ai",
+        received_at: "2026-07-13T10:00:00.000Z",
+        classification_status: "classified",
+        category: "interview_invite",
+        client_id: "c1",
+        clients: { client_name: "Client One", assigned_ca_name: "CA One", assigned_ca_email: "ca-one@applywizz.com" },
+      },
+      {
+        id: "e2",
+        sender: "recruiter@southstar.example.test",
+        subject: "Application received",
+        original_recipient: "client-two@applywizard.ai",
+        received_at: "2026-07-13T09:00:00.000Z",
+        classification_status: "classified",
+        category: "application_confirmation",
+        client_id: "c2",
+        clients: { client_name: "Client Two", assigned_ca_name: "CA Two", assigned_ca_email: "ca-two@applywizz.com" },
+      },
+    ]);
+    mockSupabase = activity as unknown as typeof mockSupabase;
+
+    const { getRecentEmailActivity } = await import("./emailArrival");
+    const result = await getRecentEmailActivity(adminScope);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.rows.length).toBeGreaterThan(1);
+    expect(getAllowedCaEmailsForManagerMock).not.toHaveBeenCalled();
+  });
+
+  it("manager_ops sees only rows whose assigned_ca_email is mapped to them", async () => {
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set(["assigned-to-balaji@applywizz.com"]));
+    const activity = makeActivitySupabase([
+      {
+        id: "e1",
+        sender: "recruiter@northstar.example.test",
+        subject: "Interview invite",
+        original_recipient: "client-one@applywizard.ai",
+        received_at: "2026-07-13T10:00:00.000Z",
+        classification_status: "classified",
+        category: "interview_invite",
+        client_id: "c1",
+        clients: { client_name: "Client One", assigned_ca_name: "Balaji", assigned_ca_email: "assigned-to-balaji@applywizz.com" },
+      },
+      {
+        id: "e2",
+        sender: "recruiter@southstar.example.test",
+        subject: "Application received",
+        original_recipient: "client-two@applywizard.ai",
+        received_at: "2026-07-13T09:00:00.000Z",
+        classification_status: "classified",
+        category: "application_confirmation",
+        client_id: "c2",
+        clients: { client_name: "Client Two", assigned_ca_name: "Someone Else", assigned_ca_email: "someone-else@applywizz.com" },
+      },
+    ]);
+    mockSupabase = activity as unknown as typeof mockSupabase;
+
+    const { getRecentEmailActivity } = await import("./emailArrival");
+    const result = await getRecentEmailActivity({ role: "manager_ops", email: "balaji@applywizz.ai" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.rows).toHaveLength(1);
+      for (const row of result.rows) {
+        expect(row.assignedCaEmail).toBe("assigned-to-balaji@applywizz.com");
+      }
+    }
+    expect(getAllowedCaEmailsForManagerMock).toHaveBeenCalledWith("balaji@applywizz.ai");
+  });
+
+  it("normalizes a mixed-case scope.email and mixed-case assigned_ca_email so casing mismatches still match", async () => {
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set(["assigned-to-balaji@applywizz.com"]));
+    const activity = makeActivitySupabase([
+      {
+        id: "e1",
+        sender: "recruiter@northstar.example.test",
+        subject: "Interview invite",
+        original_recipient: "client-one@applywizard.ai",
+        received_at: "2026-07-13T10:00:00.000Z",
+        classification_status: "classified",
+        category: "interview_invite",
+        client_id: "c1",
+        clients: { client_name: "Client One", assigned_ca_name: "Balaji", assigned_ca_email: "Assigned-To-Balaji@ApplyWizz.COM" },
+      },
+      {
+        id: "e2",
+        sender: "recruiter@southstar.example.test",
+        subject: "Application received",
+        original_recipient: "client-two@applywizard.ai",
+        received_at: "2026-07-13T09:00:00.000Z",
+        classification_status: "classified",
+        category: "application_confirmation",
+        client_id: "c2",
+        clients: { client_name: "Client Two", assigned_ca_name: "Someone Else", assigned_ca_email: "someone-else@applywizz.com" },
+      },
+    ]);
+    mockSupabase = activity as unknown as typeof mockSupabase;
+
+    const { getRecentEmailActivity } = await import("./emailArrival");
+    const result = await getRecentEmailActivity({ role: "manager_ops", email: "  BALAJI@APPLYWIZZ.AI  " });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]?.id).toBe("e1");
+    }
+    expect(getAllowedCaEmailsForManagerMock).toHaveBeenCalledWith("balaji@applywizz.ai");
+  });
+
+  it("manager_ops with no mapped CAs sees zero rows (fails closed, not everything)", async () => {
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set());
+    const activity = makeActivitySupabase([
+      {
+        id: "e1",
+        sender: "recruiter@northstar.example.test",
+        subject: "Interview invite",
+        original_recipient: "client-one@applywizard.ai",
+        received_at: "2026-07-13T10:00:00.000Z",
+        classification_status: "classified",
+        category: "interview_invite",
+        client_id: "c1",
+        clients: { client_name: "Client One", assigned_ca_name: "CA One", assigned_ca_email: "ca-one@applywizz.com" },
+      },
+    ]);
+    mockSupabase = activity as unknown as typeof mockSupabase;
+
+    const { getRecentEmailActivity } = await import("./emailArrival");
+    const result = await getRecentEmailActivity({ role: "manager_ops", email: "unmapped-manager@applywizz.ai" });
+
+    expect(result).toEqual({ ok: true, rows: [] });
+  });
+
+  it("manager_ops sees their team's recent rows even when 55+ unrelated rows are more recent (scoped fetch window, not global top-50)", async () => {
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set(["assigned-to-balaji@applywizz.com"]));
+
+    // 58 unrelated (other-team) rows, newest-first, followed by the manager's
+    // 2 team rows further back in time. A naive global limit(50) would truncate
+    // the query before the manager's own rows are ever fetched.
+    const unrelatedRows: MockRow[] = Array.from({ length: 58 }, (_, index) => ({
+      id: `unrelated-${index}`,
+      sender: "recruiter@example.test",
+      subject: "Unrelated",
+      original_recipient: `unrelated-${index}@applywizard.ai`,
+      received_at: `2026-07-20T${String(23 - Math.floor(index / 4)).padStart(2, "0")}:${String(59 - (index % 4) * 10).padStart(2, "0")}:00.000Z`,
+      classification_status: "classified",
+      category: "other",
+      client_id: `other-${index}`,
+      clients: { client_name: `Other ${index}`, assigned_ca_name: "Someone Else", assigned_ca_email: "someone-else@applywizz.com" },
+    }));
+
+    const managerTeamRows: MockRow[] = [
+      {
+        id: "team-1",
+        sender: "recruiter@northstar.example.test",
+        subject: "Interview invite",
+        original_recipient: "client-one@applywizard.ai",
+        received_at: "2026-07-19T08:00:00.000Z",
+        classification_status: "classified",
+        category: "interview_invite",
+        client_id: "c1",
+        clients: { client_name: "Client One", assigned_ca_name: "Balaji", assigned_ca_email: "assigned-to-balaji@applywizz.com" },
+      },
+      {
+        id: "team-2",
+        sender: "recruiter@southstar.example.test",
+        subject: "Application received",
+        original_recipient: "client-two@applywizard.ai",
+        received_at: "2026-07-19T07:00:00.000Z",
+        classification_status: "classified",
+        category: "application_confirmation",
+        client_id: "c2",
+        clients: { client_name: "Client Two", assigned_ca_name: "Balaji", assigned_ca_email: "assigned-to-balaji@applywizz.com" },
+      },
+    ];
+
+    const activity = makeActivitySupabase([...unrelatedRows, ...managerTeamRows]);
+    mockSupabase = activity as unknown as typeof mockSupabase;
+
+    const { getRecentEmailActivity } = await import("./emailArrival");
+    const result = await getRecentEmailActivity({ role: "manager_ops", email: "balaji@applywizz.ai" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.rows).toHaveLength(2);
+      expect(result.rows.map((row) => row.id).sort()).toEqual(["team-1", "team-2"]);
+      for (const row of result.rows) {
+        expect(row.assignedCaEmail).toBe("assigned-to-balaji@applywizz.com");
+      }
+    }
+    // The scoped fetch window must be larger than the global 50-row limit for
+    // the manager's team rows (positions 59-60) to ever reach the CA filter.
+    expect(activity.capture.limit).toBeGreaterThan(60);
+  });
+
+  it("treats an unexpected role value (e.g. ca) as scoped and fails closed, not unfiltered", async () => {
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set());
+    const activity = makeActivitySupabase([
+      {
+        id: "e1",
+        sender: "recruiter@northstar.example.test",
+        subject: "Interview invite",
+        original_recipient: "client-one@applywizard.ai",
+        received_at: "2026-07-13T10:00:00.000Z",
+        classification_status: "classified",
+        category: "interview_invite",
+        client_id: "c1",
+        clients: { client_name: "Client One", assigned_ca_name: "CA One", assigned_ca_email: "ca-one@applywizz.com" },
+      },
+    ]);
+    mockSupabase = activity as unknown as typeof mockSupabase;
+
+    const { getRecentEmailActivity } = await import("./emailArrival");
+    const result = await getRecentEmailActivity({ role: "ca", email: "some-ca@applywizz.ai" });
+
+    expect(result).toEqual({ ok: true, rows: [] });
+    expect(getAllowedCaEmailsForManagerMock).toHaveBeenCalledWith("some-ca@applywizz.ai");
   });
 });

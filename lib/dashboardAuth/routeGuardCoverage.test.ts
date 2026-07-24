@@ -27,6 +27,7 @@ const guardedPages = [
   ["application detail", "app/(operations)/applications/[applicationId]/page.tsx"],
   ["mailboxes", "app/(operations)/mailboxes/page.tsx"],
   ["ca portfolio", "app/(operations)/ca-portfolio/page.tsx"],
+  ["my team", "app/(operations)/my-team/page.tsx"],
 ] as const;
 
 const clientWrapperPages = [
@@ -49,6 +50,7 @@ const broadOperationsPages = [
   ["application detail", "app/(operations)/applications/[applicationId]/page.tsx"],
   ["mailboxes", "app/(operations)/mailboxes/page.tsx"],
   ["ca portfolio", "app/(operations)/ca-portfolio/page.tsx"],
+  ["my team", "app/(operations)/my-team/page.tsx"],
   ["dashboard", "app/dashboard/page.tsx"],
 ] as const;
 
