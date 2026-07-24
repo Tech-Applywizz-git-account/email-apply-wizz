@@ -57,6 +57,16 @@ export interface RecentActivityScope {
 
 const RECENT_ACTIVITY_LIMIT = 50;
 
+// Non-admin scopes filter by assigned CA in-app (see `allowedCaEmails` below),
+// which happens AFTER the Supabase row limit is applied. Fetching only
+// RECENT_ACTIVITY_LIMIT rows globally would silently hide a manager's team
+// activity whenever it doesn't fall in the global top-50 most-recent emails.
+// Widening the query window to this ceiling before filtering — then slicing
+// back down to RECENT_ACTIVITY_LIMIT after — is a bounded heuristic: still
+// imperfect if a team has zero activity in the last 500 global emails, but
+// far better than 50.
+const SCOPED_FETCH_LIMIT = 500;
+
 // Narrow local types: this repo has no generated Supabase types, and the embedded
 // `clients` relation is not in any global type, so we type only the columns we read.
 interface RecentEmailClientRelation {
@@ -93,13 +103,17 @@ export async function getRecentEmailActivity(scope: RecentActivityScope): Promis
 
     // Read-only. Left-joins the `clients` relation so unmapped rows (client is null)
     // remain visible. Never selects message body/content.
+    // Non-admin roles fetch a wider window (SCOPED_FETCH_LIMIT) so the CA filter
+    // below has enough rows to work with; admin_ceo keeps the tight limit since
+    // it is never filtered.
+    const fetchLimit = scope.role === "admin_ceo" ? RECENT_ACTIVITY_LIMIT : SCOPED_FETCH_LIMIT;
     const { data, error } = await supabase
       .from("zoho_email_metadata")
       .select(
         "id, sender, subject, original_recipient, received_at, classification_status, category, client_id, clients(client_name, assigned_ca_name, assigned_ca_email)",
       )
       .order("received_at", { ascending: false })
-      .limit(RECENT_ACTIVITY_LIMIT);
+      .limit(fetchLimit);
 
     if (error || !data) return { ok: false };
 
@@ -134,7 +148,11 @@ export async function getRecentEmailActivity(scope: RecentActivityScope): Promis
         if (!allowedCaEmails) return true; // admin_ceo: unfiltered
         const caEmail = row.assignedCaEmail?.toLowerCase();
         return !!caEmail && allowedCaEmails.has(caEmail);
-      });
+      })
+      // For scoped (non-admin) roles the filter above runs on the wider
+      // SCOPED_FETCH_LIMIT window fetched above, so re-apply the same
+      // RECENT_ACTIVITY_LIMIT cap here that admin_ceo gets from the query itself.
+      .slice(0, RECENT_ACTIVITY_LIMIT);
 
     return { ok: true, rows };
   } catch {

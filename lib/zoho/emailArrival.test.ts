@@ -166,7 +166,10 @@ function makeActivitySupabase(rows: MockRow[] | "error") {
                   return Promise.resolve(
                     rows === "error"
                       ? { data: null, error: { message: "boom" } }
-                      : { data: rows, error: null },
+                      // Mirrors real Supabase: the DB truncates to `count` rows
+                      // (already ordered newest-first by the caller) before the
+                      // in-app CA filter ever runs.
+                      : { data: rows.slice(0, count), error: null },
                   );
                 },
               };
@@ -378,6 +381,68 @@ describe("getRecentEmailActivity", () => {
     const result = await getRecentEmailActivity({ role: "manager_ops", email: "unmapped-manager@applywizz.ai" });
 
     expect(result).toEqual({ ok: true, rows: [] });
+  });
+
+  it("manager_ops sees their team's recent rows even when 55+ unrelated rows are more recent (scoped fetch window, not global top-50)", async () => {
+    getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set(["assigned-to-balaji@applywizz.com"]));
+
+    // 58 unrelated (other-team) rows, newest-first, followed by the manager's
+    // 2 team rows further back in time. A naive global limit(50) would truncate
+    // the query before the manager's own rows are ever fetched.
+    const unrelatedRows: MockRow[] = Array.from({ length: 58 }, (_, index) => ({
+      id: `unrelated-${index}`,
+      sender: "recruiter@example.test",
+      subject: "Unrelated",
+      original_recipient: `unrelated-${index}@applywizard.ai`,
+      received_at: `2026-07-20T${String(23 - Math.floor(index / 4)).padStart(2, "0")}:${String(59 - (index % 4) * 10).padStart(2, "0")}:00.000Z`,
+      classification_status: "classified",
+      category: "other",
+      client_id: `other-${index}`,
+      clients: { client_name: `Other ${index}`, assigned_ca_name: "Someone Else", assigned_ca_email: "someone-else@applywizz.com" },
+    }));
+
+    const managerTeamRows: MockRow[] = [
+      {
+        id: "team-1",
+        sender: "recruiter@northstar.example.test",
+        subject: "Interview invite",
+        original_recipient: "client-one@applywizard.ai",
+        received_at: "2026-07-19T08:00:00.000Z",
+        classification_status: "classified",
+        category: "interview_invite",
+        client_id: "c1",
+        clients: { client_name: "Client One", assigned_ca_name: "Balaji", assigned_ca_email: "assigned-to-balaji@applywizz.com" },
+      },
+      {
+        id: "team-2",
+        sender: "recruiter@southstar.example.test",
+        subject: "Application received",
+        original_recipient: "client-two@applywizard.ai",
+        received_at: "2026-07-19T07:00:00.000Z",
+        classification_status: "classified",
+        category: "application_confirmation",
+        client_id: "c2",
+        clients: { client_name: "Client Two", assigned_ca_name: "Balaji", assigned_ca_email: "assigned-to-balaji@applywizz.com" },
+      },
+    ];
+
+    const activity = makeActivitySupabase([...unrelatedRows, ...managerTeamRows]);
+    mockSupabase = activity as unknown as typeof mockSupabase;
+
+    const { getRecentEmailActivity } = await import("./emailArrival");
+    const result = await getRecentEmailActivity({ role: "manager_ops", email: "balaji@applywizz.ai" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.rows).toHaveLength(2);
+      expect(result.rows.map((row) => row.id).sort()).toEqual(["team-1", "team-2"]);
+      for (const row of result.rows) {
+        expect(row.assignedCaEmail).toBe("assigned-to-balaji@applywizz.com");
+      }
+    }
+    // The scoped fetch window must be larger than the global 50-row limit for
+    // the manager's team rows (positions 59-60) to ever reach the CA filter.
+    expect(activity.capture.limit).toBeGreaterThan(60);
   });
 
   it("treats an unexpected role value (e.g. ca) as scoped and fails closed, not unfiltered", async () => {
