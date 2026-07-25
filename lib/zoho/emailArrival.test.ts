@@ -68,7 +68,9 @@ vi.mock("@/lib/leadsApi/getLeadByEmail", () => ({
   getLeadByEmail: getLeadByEmailMock,
 }));
 
-const getAllowedCaEmailsForManagerMock = vi.fn(async (_managerEmail: string) => new Set<string>());
+const getAllowedCaEmailsForManagerMock = vi.fn<(managerEmail: string) => Promise<Set<string>>>(
+  async () => new Set<string>(),
+);
 
 vi.mock("@/lib/managerMapping/getAllowedCaEmails", () => ({
   getAllowedCaEmailsForManager: (managerEmail: string) => getAllowedCaEmailsForManagerMock(managerEmail),
@@ -256,33 +258,51 @@ describe("getEmailArrivalMonitorData", () => {
 
 // ── Recent Email Activity (per-email view, Supabase clients relation) ────────────
 function makeActivitySupabase(rows: MockRow[] | "error") {
-  const capture: { columns: string; order: { column: string; ascending: boolean } | null; limit: number | null } = {
-    columns: "",
-    order: null,
-    limit: null,
-  };
+  const capture: {
+    columns: string;
+    inFilter: { column: string; values: string[] } | null;
+    order: { column: string; ascending: boolean } | null;
+    limit: number | null;
+  } = { columns: "", inFilter: null, order: null, limit: null };
+
+  const allRows = rows === "error" ? [] : rows;
+
+  function terminal(currentRows: MockRow[]) {
+    return {
+      order(column: string, options: { ascending: boolean }) {
+        capture.order = { column, ascending: options.ascending };
+        return {
+          limit(count: number) {
+            capture.limit = count;
+            return Promise.resolve(
+              rows === "error"
+                ? { data: null, error: { message: "boom" } }
+                // Mirrors real Postgres: the WHERE (.in) filter is applied
+                // before LIMIT, so scoping never depends on fetch-window size.
+                : { data: currentRows.slice(0, count), error: null },
+            );
+          },
+        };
+      },
+    };
+  }
+
   const client = {
     from() {
       return {
         select(columns: string) {
           capture.columns = columns;
           return {
-            order(column: string, options: { ascending: boolean }) {
-              capture.order = { column, ascending: options.ascending };
-              return {
-                limit(count: number) {
-                  capture.limit = count;
-                  return Promise.resolve(
-                    rows === "error"
-                      ? { data: null, error: { message: "boom" } }
-                      // Mirrors real Supabase: the DB truncates to `count` rows
-                      // (already ordered newest-first by the caller) before the
-                      // in-app CA filter ever runs.
-                      : { data: rows.slice(0, count), error: null },
-                  );
-                },
-              };
+            in(column: string, values: string[]) {
+              capture.inFilter = { column, values };
+              const filtered = allRows.filter((row) => {
+                const relation = row.clients as { assigned_ca_email?: string } | null;
+                const normalized = relation?.assigned_ca_email?.trim().toLowerCase();
+                return !!normalized && values.includes(normalized);
+              });
+              return terminal(filtered);
             },
+            ...terminal(allRows),
           };
         },
       };
@@ -467,6 +487,13 @@ describe("getRecentEmailActivity", () => {
       }
     }
     expect(getAllowedCaEmailsForManagerMock).toHaveBeenCalledWith("balaji@applywizz.ai");
+    // Proves the manager scoping is a database-level WHERE filter (via the
+    // generated assigned_ca_email_normalized column), not an in-app filter.
+    expect(activity.capture.columns).toContain("clients!inner(client_name, assigned_ca_name, assigned_ca_email)");
+    expect(activity.capture.inFilter).toEqual({
+      column: "clients.assigned_ca_email_normalized",
+      values: ["assigned-to-balaji@applywizz.com"],
+    });
   });
 
   it("normalizes a mixed-case scope.email and mixed-case assigned_ca_email so casing mismatches still match", async () => {
@@ -531,12 +558,14 @@ describe("getRecentEmailActivity", () => {
     expect(result).toEqual({ ok: true, rows: [] });
   });
 
-  it("manager_ops sees their team's recent rows even when 55+ unrelated rows are more recent (scoped fetch window, not global top-50)", async () => {
+  it("manager_ops sees their team's recent rows even when 55+ unrelated rows are more recent (DB-level filter before limit, not a wide overfetch)", async () => {
     getAllowedCaEmailsForManagerMock.mockResolvedValue(new Set(["assigned-to-balaji@applywizz.com"]));
 
     // 58 unrelated (other-team) rows, newest-first, followed by the manager's
-    // 2 team rows further back in time. A naive global limit(50) would truncate
-    // the query before the manager's own rows are ever fetched.
+    // 2 team rows further back in time. Under the OLD in-app-filter design this
+    // required a wide overfetch window; under the DB-level `.in()` filter the
+    // unrelated rows are excluded by the WHERE clause before LIMIT is ever
+    // applied, so the query can — and must — stay at the plain 50-row limit.
     const unrelatedRows: MockRow[] = Array.from({ length: 58 }, (_, index) => ({
       id: `unrelated-${index}`,
       sender: "recruiter@example.test",
@@ -588,9 +617,16 @@ describe("getRecentEmailActivity", () => {
         expect(row.assignedCaEmail).toBe("assigned-to-balaji@applywizz.com");
       }
     }
-    // The scoped fetch window must be larger than the global 50-row limit for
-    // the manager's team rows (positions 59-60) to ever reach the CA filter.
-    expect(activity.capture.limit).toBeGreaterThan(60);
+    // The DB filter (not fetch-window size) is what keeps the manager's rows
+    // visible: the query still uses the plain 50-row limit...
+    expect(activity.capture.limit).toBe(50);
+    // ...because the 58 unrelated rows never reach LIMIT at all — the
+    // `.in("clients.assigned_ca_email_normalized", ...)` WHERE filter drops them
+    // first, regardless of how many there are or how recent.
+    expect(activity.capture.inFilter).toEqual({
+      column: "clients.assigned_ca_email_normalized",
+      values: ["assigned-to-balaji@applywizz.com"],
+    });
   });
 
   it("treats an unexpected role value (e.g. ca) as scoped and fails closed, not unfiltered", async () => {

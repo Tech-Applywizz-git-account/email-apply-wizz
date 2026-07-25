@@ -4,21 +4,13 @@ import { fetchCaCapacity, CaCapacityFetchError } from "@/lib/managerMapping/fetc
 import { normalizeCaRecord } from "@/lib/managerMapping/normalizeCaRecord";
 import type { NormalizedCaAssignment } from "@/lib/managerMapping/types";
 
-export interface SyncQueryResult {
-  data: unknown;
+export interface SyncRpcResult {
+  data: Array<{ upserted_count: number; deactivated_count: number; quarantined_count: number }> | null;
   error: { message: string } | null;
 }
 
 export interface SyncSupabase {
-  from(table: "manager_ca_assignments"): {
-    upsert(payload: NormalizedCaAssignment[], options: { onConflict: string }): Promise<SyncQueryResult>;
-    select(columns: string): {
-      eq(column: string, value: boolean): Promise<{ data: Array<{ ca_id: string }> | null; error: { message: string } | null }>;
-    };
-    update(payload: { is_active: false }): {
-      in(column: string, values: string[]): Promise<SyncQueryResult>;
-    };
-  };
+  rpc(fn: "sync_ca_assignments", args: { p_records: NormalizedCaAssignment[] }): Promise<SyncRpcResult>;
 }
 
 export interface CaSyncReport {
@@ -27,32 +19,25 @@ export interface CaSyncReport {
   upserted_count: number;
   skipped_count: number;
   deactivated_count: number;
+  quarantined_count: number;
   errorCode?: string;
 }
 
-// ponytail: no real "is this pull complete" signal exists from the Router
-// API, so this is a coarse guardrail — if a single run would deactivate
-// more than this fraction of currently-active CAs, treat it as an
-// incomplete/partial pull rather than a genuine mass offboarding, and skip
-// reconciliation for this run (self-corrects on the next complete pull).
-// Raise/lower if a real completeness signal becomes available, or if a
-// legitimate bulk offboarding event needs to clear this threshold in one run.
-const MAX_DEACTIVATION_FRACTION = 0.5;
-
 /**
  * Fetches the CA capacity API, normalizes each record (dropping unmapped
- * teams and malformed rows), and upserts the rest keyed on ca_id — safe to
- * run repeatedly without duplicating rows. If a CA transfers teams, the
- * upsert overwrites manager_name/manager_email with the freshly resolved
- * values (normalizeCaRecord recomputes them from team_name every run).
+ * teams and malformed rows), then hands the validated records to the
+ * `sync_ca_assignments` Postgres function, which upserts them and reconciles
+ * missing CAs in a single transaction (see the migration for the SQL).
  *
- * Reconciliation: ONLY after a fetch that both succeeded AND produced at
- * least one valid record, any previously active row whose ca_id is absent
- * from this run's valid ID set is marked is_active = false — a
- * former/transferred-out/removed CA no longer authorizes its old manager.
- * A failed fetch, an all-invalid/empty pull, or a DB error while computing
- * the diff all skip reconciliation for this run rather than guessing —
- * fail closed on trusting the pull, but self-correcting on the next run.
+ * Reconciliation runs ONLY after a fetch that both succeeded AND produced at
+ * least one valid record — a failed fetch or an all-invalid/empty pull skips
+ * the RPC entirely rather than guessing. Within the RPC, a CA missing from
+ * three consecutive valid pulls is quarantined (is_active = false); fewer
+ * than three just increments its missing-run counter, and reappearing in a
+ * later pull resets the counter and reactivates it. Because upsert and
+ * reconciliation share one transaction, an RPC failure leaves the database
+ * untouched for this run rather than applying one half — fail closed on
+ * trusting the pull, self-correcting on the next run.
  */
 export async function syncCaAssignments(supabase: SyncSupabase): Promise<CaSyncReport> {
   let rawRecords;
@@ -60,7 +45,15 @@ export async function syncCaAssignments(supabase: SyncSupabase): Promise<CaSyncR
     rawRecords = await fetchCaCapacity();
   } catch (error) {
     const code = error instanceof CaCapacityFetchError ? error.code : "CA_CAPACITY_UNKNOWN_ERROR";
-    return { ok: false, fetched_count: 0, upserted_count: 0, skipped_count: 0, deactivated_count: 0, errorCode: code };
+    return {
+      ok: false,
+      fetched_count: 0,
+      upserted_count: 0,
+      skipped_count: 0,
+      deactivated_count: 0,
+      quarantined_count: 0,
+      errorCode: code,
+    };
   }
 
   const records: NormalizedCaAssignment[] = [];
@@ -78,56 +71,32 @@ export async function syncCaAssignments(supabase: SyncSupabase): Promise<CaSyncR
       upserted_count: 0,
       skipped_count: skipped,
       deactivated_count: 0,
+      quarantined_count: 0,
     };
   }
 
-  const { error: upsertError } = await supabase
-    .from("manager_ca_assignments")
-    .upsert(records, { onConflict: "ca_id" });
+  const { data, error } = await supabase.rpc("sync_ca_assignments", { p_records: records });
 
-  if (upsertError) {
+  if (error || !data || !data[0]) {
     return {
       ok: false,
       fetched_count: rawRecords.length,
       upserted_count: 0,
       skipped_count: skipped,
       deactivated_count: 0,
+      quarantined_count: 0,
       errorCode: "DATABASE_ERROR",
     };
   }
 
-  const validCaIds = new Set(records.map((record) => record.ca_id));
-  let deactivated = 0;
-
-  const { data: activeRows, error: selectError } = await supabase
-    .from("manager_ca_assignments")
-    .select("ca_id")
-    .eq("is_active", true);
-
-  if (!selectError) {
-    const staleIds = (activeRows ?? [])
-      .map((row) => row.ca_id)
-      .filter((caId) => !validCaIds.has(caId));
-
-    const rows = activeRows ?? [];
-    const wouldExceedThreshold =
-      rows.length > 0 && staleIds.length / rows.length > MAX_DEACTIVATION_FRACTION;
-
-    if (!wouldExceedThreshold && staleIds.length > 0) {
-      const { error: deactivateError } = await supabase
-        .from("manager_ca_assignments")
-        .update({ is_active: false })
-        .in("ca_id", staleIds);
-
-      if (!deactivateError) deactivated = staleIds.length;
-    }
-  }
+  const { upserted_count, deactivated_count, quarantined_count } = data[0];
 
   return {
     ok: true,
     fetched_count: rawRecords.length,
-    upserted_count: records.length,
+    upserted_count,
     skipped_count: skipped,
-    deactivated_count: deactivated,
+    deactivated_count,
+    quarantined_count,
   };
 }

@@ -16,36 +16,20 @@ vi.mock("@/lib/managerMapping/fetchCaCapacity", async (importOriginal) => {
 });
 
 function makeSupabase(options?: {
-  activeRows?: Array<{ ca_id: string }>;
-  selectError?: { message: string } | null;
-  updateError?: { message: string } | null;
+  rpcResult?: { upserted_count: number; deactivated_count: number; quarantined_count: number };
+  rpcError?: { message: string } | null;
 }) {
-  const upserted: Record<string, unknown>[][] = [];
-  const activeRows = options?.activeRows ?? [];
-  const selectError = options?.selectError ?? null;
-  const updateError = options?.updateError ?? null;
-  const updateCalls: Array<{ payload: { is_active: false }; ids: string[] }> = [];
+  const rpcCalls: Array<{ fn: string; args: unknown }> = [];
+  const rpcResult = options?.rpcResult ?? { upserted_count: 0, deactivated_count: 0, quarantined_count: 0 };
+  const rpcError = options?.rpcError ?? null;
 
   const supabase = {
-    from: (table: string) => ({
-      upsert: (payload: Record<string, unknown>[], _options: { onConflict: string }) => {
-        if (table === "manager_ca_assignments") upserted.push(payload);
-        return Promise.resolve({ data: null, error: null });
-      },
-      select: (_columns: string) => ({
-        eq: (_column: string, _value: boolean) => {
-          return Promise.resolve({ data: activeRows, error: selectError });
-        },
-      }),
-      update: (payload: { is_active: false }) => ({
-        in: (_column: string, ids: string[]) => {
-          updateCalls.push({ payload, ids });
-          return Promise.resolve({ data: null, error: updateError });
-        },
-      }),
-    }),
+    rpc: (fn: string, args: unknown) => {
+      rpcCalls.push({ fn, args });
+      return Promise.resolve({ data: rpcError ? null : [rpcResult], error: rpcError });
+    },
   };
-  return { supabase, upserted, updateCalls };
+  return { supabase, rpcCalls };
 }
 
 describe("syncCaAssignments", () => {
@@ -54,7 +38,7 @@ describe("syncCaAssignments", () => {
       { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
       { ca_id: "id-2", name: "Unmapped CA", email: "unmapped@applywizz.com", team_name: "Nonexistent Team" },
     ]);
-    const { supabase, upserted } = makeSupabase();
+    const { supabase, rpcCalls } = makeSupabase({ rpcResult: { upserted_count: 1, deactivated_count: 0, quarantined_count: 0 } });
     const { syncCaAssignments } = await import("./syncCaAssignments");
 
     const report = await syncCaAssignments(supabase as never);
@@ -65,116 +49,92 @@ describe("syncCaAssignments", () => {
       upserted_count: 1,
       skipped_count: 1,
       deactivated_count: 0,
+      quarantined_count: 0,
     });
-    expect(upserted).toHaveLength(1);
-    expect(upserted[0]).toEqual([
-      expect.objectContaining({ ca_id: "id-1", manager_email: "balaji@applywizz.ai" }),
-    ]);
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0]?.fn).toBe("sync_ca_assignments");
+    expect(rpcCalls[0]?.args).toEqual({
+      p_records: [expect.objectContaining({ ca_id: "id-1", manager_email: "balaji@applywizz.ai" })],
+    });
   });
 
-  it("is idempotent: upserts with onConflict on ca_id so repeat runs never duplicate", async () => {
-    fetchCaCapacity.mockResolvedValue([
-      { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
-    ]);
-    let capturedOnConflict = "";
-    const supabase = {
-      from: () => ({
-        upsert: (_payload: unknown, options: { onConflict: string }) => {
-          capturedOnConflict = options.onConflict;
-          return Promise.resolve({ data: null, error: null });
-        },
-        select: () => ({
-          eq: () => Promise.resolve({ data: [], error: null }),
-        }),
-        update: () => ({
-          in: () => Promise.resolve({ data: null, error: null }),
-        }),
-      }),
-    };
-    const { syncCaAssignments } = await import("./syncCaAssignments");
-    await syncCaAssignments(supabase as never);
-    expect(capturedOnConflict).toBe("ca_id");
-  });
-
-  it("reports ok:false with an error code when the fetch itself fails, without touching the database", async () => {
+  it("reports ok:false with an error code when the fetch itself fails, without calling the RPC", async () => {
     const { CaCapacityFetchError } = await import("./fetchCaCapacity");
     fetchCaCapacity.mockRejectedValue(new CaCapacityFetchError("CA_CAPACITY_HTTP_ERROR", 500));
-    const upsert = vi.fn();
-    const select = vi.fn();
-    const update = vi.fn();
-    const supabase = { from: () => ({ upsert, select, update }) };
+    const rpc = vi.fn();
+    const supabase = { rpc };
 
     const { syncCaAssignments } = await import("./syncCaAssignments");
     const report = await syncCaAssignments(supabase as never);
 
-    expect(report).toMatchObject({ ok: false, errorCode: "CA_CAPACITY_HTTP_ERROR", deactivated_count: 0 });
-    expect(upsert).not.toHaveBeenCalled();
-    expect(select).not.toHaveBeenCalled();
-    expect(update).not.toHaveBeenCalled();
+    expect(report).toMatchObject({ ok: false, errorCode: "CA_CAPACITY_HTTP_ERROR", deactivated_count: 0, quarantined_count: 0 });
+    expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("removal: deactivates a previously active CA missing from the latest valid pull", async () => {
+  it("all-invalid/empty pull skips the RPC entirely", async () => {
+    fetchCaCapacity.mockResolvedValue([
+      { ca_id: "id-2", name: "Unmapped CA", email: "unmapped@applywizz.com", team_name: "Nonexistent Team" },
+    ]);
+    const rpc = vi.fn();
+    const supabase = { rpc };
+
+    const { syncCaAssignments } = await import("./syncCaAssignments");
+    const report = await syncCaAssignments(supabase as never);
+
+    expect(report).toMatchObject({ ok: true, deactivated_count: 0, quarantined_count: 0 });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("empty pull (zero rows) also skips the RPC entirely", async () => {
+    fetchCaCapacity.mockResolvedValue([]);
+    const rpc = vi.fn();
+    const supabase = { rpc };
+
+    const { syncCaAssignments } = await import("./syncCaAssignments");
+    const report = await syncCaAssignments(supabase as never);
+
+    expect(report).toMatchObject({ ok: true, deactivated_count: 0, quarantined_count: 0 });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("quarantine: a CA missing for 1-2 runs is not deactivated (RPC reports it as still-active/quarantined)", async () => {
     fetchCaCapacity.mockResolvedValue([
       { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
     ]);
-    const { supabase, updateCalls } = makeSupabase({
-      activeRows: [{ ca_id: "id-1" }, { ca_id: "id-2" }],
-    });
-    const { syncCaAssignments } = await import("./syncCaAssignments");
+    // The RPC itself owns the missing_run_count increment/threshold logic;
+    // this test asserts syncCaAssignments correctly relays what the RPC
+    // reports back (0 deactivated, 1 still-active-but-quarantined).
+    const { supabase } = makeSupabase({ rpcResult: { upserted_count: 1, deactivated_count: 0, quarantined_count: 1 } });
 
+    const { syncCaAssignments } = await import("./syncCaAssignments");
     const report = await syncCaAssignments(supabase as never);
 
-    expect(report.deactivated_count).toBe(1);
-    expect(updateCalls).toHaveLength(1);
-    expect(updateCalls[0].payload).toEqual({ is_active: false });
-    expect(updateCalls[0].ids).toEqual(["id-2"]);
+    expect(report).toMatchObject({ ok: true, deactivated_count: 0, quarantined_count: 1 });
   });
 
-  it("safety threshold: skips deactivation when a run would remove more than half of active CAs (partial/incomplete pull)", async () => {
+  it("quarantine: a CA missing for a 3rd consecutive run is deactivated (relayed from the RPC)", async () => {
     fetchCaCapacity.mockResolvedValue([
       { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
     ]);
-    const { supabase, updateCalls } = makeSupabase({
-      activeRows: [{ ca_id: "id-1" }, { ca_id: "id-2" }, { ca_id: "id-3" }, { ca_id: "id-4" }],
-    });
-    const { syncCaAssignments } = await import("./syncCaAssignments");
+    const { supabase } = makeSupabase({ rpcResult: { upserted_count: 1, deactivated_count: 1, quarantined_count: 0 } });
 
+    const { syncCaAssignments } = await import("./syncCaAssignments");
     const report = await syncCaAssignments(supabase as never);
 
-    expect(report.deactivated_count).toBe(0);
-    expect(report.ok).toBe(true);
-    expect(updateCalls).toHaveLength(0);
+    expect(report).toMatchObject({ ok: true, deactivated_count: 1, quarantined_count: 0 });
   });
 
-  it("safety threshold: proceeds with deactivation when a run would remove under half of active CAs (ordinary turnover)", async () => {
-    fetchCaCapacity.mockResolvedValue([
-      { ca_id: "id-1", name: "Valid CA 1", email: "valid1@applywizz.com", team_name: "Balaji Team" },
-      { ca_id: "id-2", name: "Valid CA 2", email: "valid2@applywizz.com", team_name: "Balaji Team" },
-      { ca_id: "id-3", name: "Valid CA 3", email: "valid3@applywizz.com", team_name: "Balaji Team" },
-    ]);
-    const { supabase, updateCalls } = makeSupabase({
-      activeRows: [{ ca_id: "id-1" }, { ca_id: "id-2" }, { ca_id: "id-3" }, { ca_id: "id-4" }],
-    });
-    const { syncCaAssignments } = await import("./syncCaAssignments");
-
-    const report = await syncCaAssignments(supabase as never);
-
-    expect(report.deactivated_count).toBe(1);
-    expect(updateCalls).toHaveLength(1);
-    expect(updateCalls[0].ids).toEqual(["id-4"]);
-  });
-
-  it("transfer: a CA moving teams gets its manager_name/manager_email overwritten on upsert", async () => {
+  it("transfer: a CA moving teams gets its manager_name/manager_email overwritten in the record sent to the RPC", async () => {
     fetchCaCapacity.mockResolvedValue([
       { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
     ]);
-    const { supabase, upserted } = makeSupabase();
-    const { syncCaAssignments } = await import("./syncCaAssignments");
+    const { supabase, rpcCalls } = makeSupabase({ rpcResult: { upserted_count: 1, deactivated_count: 0, quarantined_count: 0 } });
 
+    const { syncCaAssignments } = await import("./syncCaAssignments");
     await syncCaAssignments(supabase as never);
 
-    expect(upserted).toHaveLength(1);
-    expect(upserted[0]).toEqual([
+    const args = rpcCalls[0]?.args as { p_records: Array<Record<string, unknown>> };
+    expect(args.p_records).toEqual([
       expect.objectContaining({
         ca_id: "id-1",
         manager_name: expect.any(String),
@@ -183,88 +143,21 @@ describe("syncCaAssignments", () => {
     ]);
   });
 
-  it("idempotent rerun: deactivated_count stays 0 across repeat runs when the pull matches current state", async () => {
+  it("atomicity: an RPC error fails the whole run (ok:false) instead of a partial upsert-without-reconciliation", async () => {
     fetchCaCapacity.mockResolvedValue([
       { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
     ]);
-    const { supabase } = makeSupabase({ activeRows: [{ ca_id: "id-1" }] });
-    const { syncCaAssignments } = await import("./syncCaAssignments");
-
-    const firstReport = await syncCaAssignments(supabase as never);
-    const secondReport = await syncCaAssignments(supabase as never);
-
-    expect(firstReport.deactivated_count).toBe(0);
-    expect(firstReport.ok).toBe(true);
-    expect(secondReport.deactivated_count).toBe(0);
-    expect(secondReport.ok).toBe(true);
-  });
-
-  it("all-invalid/empty pull skips reconciliation entirely without calling select/update", async () => {
-    fetchCaCapacity.mockResolvedValue([
-      { ca_id: "id-2", name: "Unmapped CA", email: "unmapped@applywizz.com", team_name: "Nonexistent Team" },
-    ]);
-    const select = vi.fn();
-    const update = vi.fn();
-    const upsert = vi.fn();
-    const supabase = { from: () => ({ upsert, select, update }) };
+    const { supabase } = makeSupabase({ rpcError: { message: "connection reset mid-transaction" } });
 
     const { syncCaAssignments } = await import("./syncCaAssignments");
     const report = await syncCaAssignments(supabase as never);
 
-    expect(report.deactivated_count).toBe(0);
-    expect(report.ok).toBe(true);
-    expect(select).not.toHaveBeenCalled();
-    expect(update).not.toHaveBeenCalled();
-  });
-
-  it("empty pull (zero rows) also skips reconciliation without calling select/update", async () => {
-    fetchCaCapacity.mockResolvedValue([]);
-    const select = vi.fn();
-    const update = vi.fn();
-    const upsert = vi.fn();
-    const supabase = { from: () => ({ upsert, select, update }) };
-
-    const { syncCaAssignments } = await import("./syncCaAssignments");
-    const report = await syncCaAssignments(supabase as never);
-
-    expect(report.deactivated_count).toBe(0);
-    expect(report.ok).toBe(true);
-    expect(select).not.toHaveBeenCalled();
-    expect(update).not.toHaveBeenCalled();
-  });
-
-  it("select error during reconciliation skips deactivation and returns ok:true, deactivated_count:0", async () => {
-    fetchCaCapacity.mockResolvedValue([
-      { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
-    ]);
-    const { supabase, updateCalls } = makeSupabase({
-      activeRows: [{ ca_id: "id-1" }, { ca_id: "id-2" }],
-      selectError: { message: "Database query error" },
+    expect(report).toMatchObject({
+      ok: false,
+      errorCode: "DATABASE_ERROR",
+      upserted_count: 0,
+      deactivated_count: 0,
+      quarantined_count: 0,
     });
-    const { syncCaAssignments } = await import("./syncCaAssignments");
-
-    const report = await syncCaAssignments(supabase as never);
-
-    expect(report.ok).toBe(true);
-    expect(report.deactivated_count).toBe(0);
-    expect(updateCalls).toHaveLength(0);
-  });
-
-  it("update error during reconciliation fails to deactivate but returns ok:true, deactivated_count:0", async () => {
-    fetchCaCapacity.mockResolvedValue([
-      { ca_id: "id-1", name: "Valid CA", email: "valid@applywizz.com", team_name: "Balaji Team" },
-    ]);
-    const { supabase, updateCalls } = makeSupabase({
-      activeRows: [{ ca_id: "id-1" }, { ca_id: "id-2" }],
-      updateError: { message: "Database update error" },
-    });
-    const { syncCaAssignments } = await import("./syncCaAssignments");
-
-    const report = await syncCaAssignments(supabase as never);
-
-    expect(report.ok).toBe(true);
-    expect(report.deactivated_count).toBe(0);
-    expect(updateCalls).toHaveLength(1);
-    expect(updateCalls[0].ids).toEqual(["id-2"]);
   });
 });

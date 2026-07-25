@@ -49,7 +49,7 @@ export async function fetchCaCapacity(options: FetchCaCapacityOptions = {}): Pro
     });
   } catch {
     // Never surface the underlying error — it can embed the request URL.
-    throw new CaCapacityFetchError("CA_CAPACITY_NETWORK_ERROR");
+    throw new CaCapacityFetchError(controller.signal.aborted ? "CA_CAPACITY_TIMEOUT" : "CA_CAPACITY_NETWORK_ERROR");
   } finally {
     clearTimeout(timer);
   }

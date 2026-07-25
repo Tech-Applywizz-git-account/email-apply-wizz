@@ -41,9 +41,23 @@ describe("fetchCaCapacity", () => {
     await expect(fetchCaCapacity({ fetchImpl })).rejects.toMatchObject({ code: "CA_CAPACITY_INVALID_JSON" });
   });
 
-  it("throws CA_CAPACITY_NETWORK_ERROR when the request throws", async () => {
+  it("throws CA_CAPACITY_NETWORK_ERROR when the request throws for a reason other than the timeout abort", async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error("network down"));
     await expect(fetchCaCapacity({ fetchImpl })).rejects.toMatchObject({ code: "CA_CAPACITY_NETWORK_ERROR" });
+  });
+
+  it("throws CA_CAPACITY_TIMEOUT (not CA_CAPACITY_NETWORK_ERROR) when the request is aborted by the timeout", async () => {
+    const fetchImpl = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          const err = new Error("The operation was aborted");
+          err.name = "AbortError";
+          reject(err);
+        });
+      });
+    });
+
+    await expect(fetchCaCapacity({ fetchImpl, timeoutMs: 5 })).rejects.toMatchObject({ code: "CA_CAPACITY_TIMEOUT" });
   });
 
   it("uses the CA_CAPACITY_API_URL env override when set", async () => {

@@ -64,16 +64,6 @@ export interface RecentActivityScope {
 
 const RECENT_ACTIVITY_LIMIT = 50;
 
-// Non-admin scopes filter by assigned CA in-app (see `allowedCaEmails` below),
-// which happens AFTER the Supabase row limit is applied. Fetching only
-// RECENT_ACTIVITY_LIMIT rows globally would silently hide a manager's team
-// activity whenever it doesn't fall in the global top-50 most-recent emails.
-// Widening the query window to this ceiling before filtering — then slicing
-// back down to RECENT_ACTIVITY_LIMIT after — is a bounded heuristic: still
-// imperfect if a team has zero activity in the last 500 global emails, but
-// far better than 50.
-const SCOPED_FETCH_LIMIT = 500;
-
 // Narrow local types: this repo has no generated Supabase types, and the embedded
 // `clients` relation is not in any global type, so we type only the columns we read.
 interface RecentEmailClientRelation {
@@ -94,72 +84,78 @@ interface RecentEmailQueryRow {
   clients: RecentEmailClientRelation | RecentEmailClientRelation[] | null;
 }
 
+interface RecentActivityQueryBuilder {
+  in(column: string, values: string[]): RecentActivityQueryBuilder;
+  order(
+    column: string,
+    options: { ascending: boolean },
+  ): {
+    limit(count: number): Promise<{ data: RecentEmailQueryRow[] | null; error: { message: string } | null }>;
+  };
+}
+
 interface RecentActivitySupabase {
   from(table: string): {
-    select(columns: string): {
-      order(column: string, options: { ascending: boolean }): {
-        limit(count: number): Promise<{ data: RecentEmailQueryRow[] | null; error: { message: string } | null }>;
-      };
-    };
+    select(columns: string): RecentActivityQueryBuilder;
   };
 }
 
 export async function getRecentEmailActivity(scope: RecentActivityScope): Promise<GetRecentEmailActivityResult> {
   try {
-    const supabase = createSupabaseServiceRoleClient() as unknown as RecentActivitySupabase;
-
-    // Read-only. Left-joins the `clients` relation so unmapped rows (client is null)
-    // remain visible. Never selects message body/content.
-    // Non-admin roles fetch a wider window (SCOPED_FETCH_LIMIT) so the CA filter
-    // below has enough rows to work with; admin_ceo keeps the tight limit since
-    // it is never filtered.
-    const fetchLimit = scope.role === "admin_ceo" ? RECENT_ACTIVITY_LIMIT : SCOPED_FETCH_LIMIT;
-    const { data, error } = await supabase
-      .from("zoho_email_metadata")
-      .select(
-        "id, sender, subject, original_recipient, received_at, classification_status, category, client_id, clients(client_name, assigned_ca_name, assigned_ca_email)",
-      )
-      .order("received_at", { ascending: false })
-      .limit(fetchLimit);
-
-    if (error || !data) return { ok: false };
-
     // admin_ceo is the ONLY unfiltered role. Every other role (including any
     // unexpected value that shouldn't reach here in practice, since `ca` is
     // already blocked by requireOperationsAccess()) is scoped through the
-    // manager lookup, which safely yields an empty set — and therefore zero
-    // rows below — for any email with no manager_ca_assignments rows.
-    let allowedCaEmails: Set<string> | null = null;
+    // manager lookup, which safely yields an empty set for any manager with
+    // no manager_ca_assignments rows — fail closed, show nothing, without
+    // ever touching zoho_email_metadata.
+    let allowedCaEmails: string[] | null = null;
     if (scope.role !== "admin_ceo") {
-      allowedCaEmails = await getAllowedCaEmailsForManager(normalizeEmail(scope.email));
+      const allowed = await getAllowedCaEmailsForManager(normalizeEmail(scope.email));
+      if (allowed.size === 0) return { ok: true, rows: [] };
+      allowedCaEmails = Array.from(allowed);
     }
 
-    const rows: LiveMonitorEmailRow[] = data
-      .map((row) => {
-        const relation = Array.isArray(row.clients) ? (row.clients[0] ?? null) : row.clients;
-        return {
-          id: String(row.id),
-          sender: row.sender ?? null,
-          subject: row.subject ?? null,
-          originalRecipient: row.original_recipient ?? null,
-          receivedAt: row.received_at ?? null,
-          classificationStatus: row.classification_status ?? null,
-          category: row.category ?? null,
-          clientId: row.client_id ?? null,
-          clientName: relation?.client_name ?? null,
-          assignedCaName: relation?.assigned_ca_name ?? null,
-          assignedCaEmail: relation?.assigned_ca_email ?? null,
-        };
-      })
-      .filter((row) => {
-        if (!allowedCaEmails) return true; // admin_ceo: unfiltered
-        const caEmail = row.assignedCaEmail ? normalizeEmail(row.assignedCaEmail) : null;
-        return !!caEmail && allowedCaEmails.has(caEmail);
-      })
-      // For scoped (non-admin) roles the filter above runs on the wider
-      // SCOPED_FETCH_LIMIT window fetched above, so re-apply the same
-      // RECENT_ACTIVITY_LIMIT cap here that admin_ceo gets from the query itself.
-      .slice(0, RECENT_ACTIVITY_LIMIT);
+    const supabase = createSupabaseServiceRoleClient() as unknown as RecentActivitySupabase;
+
+    // Read-only. Never selects message body/content. admin_ceo left-joins
+    // `clients` (plain `clients(...)`) so unmapped rows (client is null)
+    // remain visible. Scoped roles inner-join (`clients!inner(...)`) and
+    // filter on the joined column via `.in("clients.assigned_ca_email", ...)`
+    // — the manager scoping happens in the database, before `.limit()`, so a
+    // manager's team activity is never at risk of falling outside a global
+    // top-N window.
+    const relation = allowedCaEmails ? "clients!inner" : "clients";
+    let query = supabase
+      .from("zoho_email_metadata")
+      .select(
+        `id, sender, subject, original_recipient, received_at, classification_status, category, client_id, ${relation}(client_name, assigned_ca_name, assigned_ca_email)`,
+      );
+    // Filter on the generated assigned_ca_email_normalized column, not the raw
+    // assigned_ca_email, so a casing/whitespace mismatch between the leads-synced
+    // clients row and the already-normalized allowedCaEmails set can't drop a
+    // manager's own row. allowedCaEmails is already normalizeEmail()'d.
+    if (allowedCaEmails) query = query.in("clients.assigned_ca_email_normalized", allowedCaEmails);
+
+    const { data, error } = await query.order("received_at", { ascending: false }).limit(RECENT_ACTIVITY_LIMIT);
+
+    if (error || !data) return { ok: false };
+
+    const rows: LiveMonitorEmailRow[] = data.map((row) => {
+      const clientRelation = Array.isArray(row.clients) ? (row.clients[0] ?? null) : row.clients;
+      return {
+        id: String(row.id),
+        sender: row.sender ?? null,
+        subject: row.subject ?? null,
+        originalRecipient: row.original_recipient ?? null,
+        receivedAt: row.received_at ?? null,
+        classificationStatus: row.classification_status ?? null,
+        category: row.category ?? null,
+        clientId: row.client_id ?? null,
+        clientName: clientRelation?.client_name ?? null,
+        assignedCaName: clientRelation?.assigned_ca_name ?? null,
+        assignedCaEmail: clientRelation?.assigned_ca_email ?? null,
+      };
+    });
 
     return { ok: true, rows };
   } catch {
