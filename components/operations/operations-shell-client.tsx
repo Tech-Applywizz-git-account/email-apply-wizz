@@ -152,6 +152,11 @@ export function OperationsShellClient({
                 icon={<IconReviewQueue size={20} />}
                 label="Review Queue"
               />
+              <NavLink
+                href="/my-team"
+                icon={<IconClients size={20} />}
+                label="My Team"
+              />
             </>
           ) : (
             <NavLink href="/access-pending" icon={<IconOverview size={20} />} label="Access Pending" />
@@ -250,6 +255,12 @@ export function OperationsShellClient({
                     label="Review Queue"
                     onClick={() => setMobileMenuOpen(false)}
                   />
+                  <NavLink
+                    href="/my-team"
+                    icon={<IconClients size={20} />}
+                    label="My Team"
+                    onClick={() => setMobileMenuOpen(false)}
+                  />
                 </>
               ) : (
                 <NavLink
@@ -321,6 +332,12 @@ export function OperationsShellClient({
                 <IconReviewQueue size={20} />
               </span>
               <span className="nav-text">Review</span>
+            </Link>
+            <Link href="/my-team" className="bottom-nav-item">
+              <span className="nav-icon">
+                <IconClients size={20} />
+              </span>
+              <span className="nav-text">My Team</span>
             </Link>
           </>
         ) : (

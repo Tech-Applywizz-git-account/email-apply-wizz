@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getLeadByEmail } from "@/lib/leadsApi/getLeadByEmail";
+import { getAllowedCaEmailsForManager } from "@/lib/managerMapping/getAllowedCaEmails";
+import { normalizeEmail } from "@/lib/managerMapping/normalizeEmail";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/serviceRole";
 
 export const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -27,11 +29,17 @@ export interface EmailArrivalMonitorData {
   activeMailboxesToday: number;
 }
 
-// ── Recent Email Activity (Live Monitor V1 per-email view) ──────────────────────
-// Intentionally a SEPARATE data source from the mailbox summary above: the summary
-// derives client/CA from the Leads API (getLeadByEmail), while this per-email view
-// derives client/CA from the Supabase `clients` relation (FK zoho_email_metadata
-// .client_id → clients.id). The two are deliberately not unified in Step 3.
+// ── Recent Email Activity (secondary, supplementary per-message table) ──────────
+// This is a SEPARATE data source from the mailbox-level summary built by
+// getEmailArrivalMonitorData below: the mailbox summary is the original, approved
+// Live Monitor ("Email Arrival by Client Mailbox" — Total Emails Today / Latest
+// Email Time / Active Mailboxes Today) and derives client/CA per mailbox from the
+// Leads API (getLeadByEmail); it is the primary manager-scoped Live Monitor surface.
+// This per-email view instead derives client/CA from the Supabase `clients` relation
+// (FK zoho_email_metadata.client_id → clients.id). It was scoped by manager in an
+// earlier task, but that scoping only covers this supplementary table — it must not
+// be described as having completed Live Monitor manager scoping on its own. The two
+// data sources are deliberately not unified in Step 3.
 
 export interface LiveMonitorEmailRow {
   id: string;
@@ -48,6 +56,11 @@ export interface LiveMonitorEmailRow {
 }
 
 export type GetRecentEmailActivityResult = { ok: true; rows: LiveMonitorEmailRow[] } | { ok: false };
+
+export interface RecentActivityScope {
+  role: "admin_ceo" | "manager_ops" | "ca";
+  email: string;
+}
 
 const RECENT_ACTIVITY_LIMIT = 50;
 
@@ -71,34 +84,64 @@ interface RecentEmailQueryRow {
   clients: RecentEmailClientRelation | RecentEmailClientRelation[] | null;
 }
 
-interface RecentActivitySupabase {
-  from(table: string): {
-    select(columns: string): {
-      order(column: string, options: { ascending: boolean }): {
-        limit(count: number): Promise<{ data: RecentEmailQueryRow[] | null; error: { message: string } | null }>;
-      };
-    };
+interface RecentActivityQueryBuilder {
+  in(column: string, values: string[]): RecentActivityQueryBuilder;
+  order(
+    column: string,
+    options: { ascending: boolean },
+  ): {
+    limit(count: number): Promise<{ data: RecentEmailQueryRow[] | null; error: { message: string } | null }>;
   };
 }
 
-export async function getRecentEmailActivity(): Promise<GetRecentEmailActivityResult> {
+interface RecentActivitySupabase {
+  from(table: string): {
+    select(columns: string): RecentActivityQueryBuilder;
+  };
+}
+
+export async function getRecentEmailActivity(scope: RecentActivityScope): Promise<GetRecentEmailActivityResult> {
   try {
+    // admin_ceo is the ONLY unfiltered role. Every other role (including any
+    // unexpected value that shouldn't reach here in practice, since `ca` is
+    // already blocked by requireOperationsAccess()) is scoped through the
+    // manager lookup, which safely yields an empty set for any manager with
+    // no manager_ca_assignments rows — fail closed, show nothing, without
+    // ever touching zoho_email_metadata.
+    let allowedCaEmails: string[] | null = null;
+    if (scope.role !== "admin_ceo") {
+      const allowed = await getAllowedCaEmailsForManager(normalizeEmail(scope.email));
+      if (allowed.size === 0) return { ok: true, rows: [] };
+      allowedCaEmails = Array.from(allowed);
+    }
+
     const supabase = createSupabaseServiceRoleClient() as unknown as RecentActivitySupabase;
 
-    // Read-only. Left-joins the `clients` relation so unmapped rows (client is null)
-    // remain visible. Never selects message body/content.
-    const { data, error } = await supabase
+    // Read-only. Never selects message body/content. admin_ceo left-joins
+    // `clients` (plain `clients(...)`) so unmapped rows (client is null)
+    // remain visible. Scoped roles inner-join (`clients!inner(...)`) and
+    // filter on the joined column via `.in("clients.assigned_ca_email", ...)`
+    // — the manager scoping happens in the database, before `.limit()`, so a
+    // manager's team activity is never at risk of falling outside a global
+    // top-N window.
+    const relation = allowedCaEmails ? "clients!inner" : "clients";
+    let query = supabase
       .from("zoho_email_metadata")
       .select(
-        "id, sender, subject, original_recipient, received_at, classification_status, category, client_id, clients(client_name, assigned_ca_name, assigned_ca_email)",
-      )
-      .order("received_at", { ascending: false })
-      .limit(RECENT_ACTIVITY_LIMIT);
+        `id, sender, subject, original_recipient, received_at, classification_status, category, client_id, ${relation}(client_name, assigned_ca_name, assigned_ca_email)`,
+      );
+    // Filter on the generated assigned_ca_email_normalized column, not the raw
+    // assigned_ca_email, so a casing/whitespace mismatch between the leads-synced
+    // clients row and the already-normalized allowedCaEmails set can't drop a
+    // manager's own row. allowedCaEmails is already normalizeEmail()'d.
+    if (allowedCaEmails) query = query.in("clients.assigned_ca_email_normalized", allowedCaEmails);
+
+    const { data, error } = await query.order("received_at", { ascending: false }).limit(RECENT_ACTIVITY_LIMIT);
 
     if (error || !data) return { ok: false };
 
     const rows: LiveMonitorEmailRow[] = data.map((row) => {
-      const relation = Array.isArray(row.clients) ? (row.clients[0] ?? null) : row.clients;
+      const clientRelation = Array.isArray(row.clients) ? (row.clients[0] ?? null) : row.clients;
       return {
         id: String(row.id),
         sender: row.sender ?? null,
@@ -108,9 +151,9 @@ export async function getRecentEmailActivity(): Promise<GetRecentEmailActivityRe
         classificationStatus: row.classification_status ?? null,
         category: row.category ?? null,
         clientId: row.client_id ?? null,
-        clientName: relation?.client_name ?? null,
-        assignedCaName: relation?.assigned_ca_name ?? null,
-        assignedCaEmail: relation?.assigned_ca_email ?? null,
+        clientName: clientRelation?.client_name ?? null,
+        assignedCaName: clientRelation?.assigned_ca_name ?? null,
+        assignedCaEmail: clientRelation?.assigned_ca_email ?? null,
       };
     });
 
@@ -155,7 +198,17 @@ export function formatIstTime(value: string | null): string {
   }).format(new Date(value));
 }
 
-export async function getEmailArrivalMonitorData(now = new Date()): Promise<GetEmailArrivalMonitorResult> {
+// The original, approved Live Monitor: mailbox-level daily summary (Total Emails
+// Today / Latest Email Time / Active Mailboxes Today, and the "Email Arrival by
+// Client Mailbox" table). This is the primary manager-scoped Live Monitor surface —
+// scope follows the same fail-closed convention as getRecentEmailActivity above:
+// admin_ceo is unfiltered, every other role is restricted to mailboxes whose
+// assignedCaEmail resolves (via getAllowedCaEmailsForManager) to one of the
+// signed-in manager's own CAs.
+export async function getEmailArrivalMonitorData(
+  scope: RecentActivityScope,
+  now = new Date(),
+): Promise<GetEmailArrivalMonitorResult> {
   try {
     const supabase = createSupabaseServiceRoleClient() as unknown as SupabaseLike;
     const { startUtc, endUtc } = getIstDayBounds(now);
@@ -201,15 +254,36 @@ export async function getEmailArrivalMonitorData(now = new Date()): Promise<GetE
       })),
     );
 
-    const totalEmailsToday = rowsWithLeads.reduce((sum, row) => sum + row.emailsToday, 0);
+    // admin_ceo is the ONLY unfiltered role, same fail-closed convention as
+    // getRecentEmailActivity: any other role value (including unexpected ones)
+    // is scoped through the manager lookup, which safely yields an empty set
+    // (and therefore zero rows) for any email with no manager_ca_assignments
+    // rows. The "-" fallback sentinel (no Leads API match) never appears in a
+    // manager's allowed-CA set, so it naturally never passes this filter.
+    let allowedCaEmails: Set<string> | null = null;
+    if (scope.role !== "admin_ceo") {
+      allowedCaEmails = await getAllowedCaEmailsForManager(normalizeEmail(scope.email));
+    }
+
+    const scopedRows = allowedCaEmails
+      ? rowsWithLeads.filter((row) => {
+          const caEmail = row.assignedCaEmail ? normalizeEmail(row.assignedCaEmail) : null;
+          return !!caEmail && allowedCaEmails.has(caEmail);
+        })
+      : rowsWithLeads;
+
+    // Totals are recomputed from the (possibly filtered) scopedRows, never from
+    // the original unfiltered rowsWithLeads, so a manager's aggregates reflect
+    // only their own team's mailboxes.
+    const totalEmailsToday = scopedRows.reduce((sum, row) => sum + row.emailsToday, 0);
 
     return {
       ok: true,
       data: {
-        rows: rowsWithLeads,
+        rows: scopedRows,
         totalEmailsToday,
-        latestEmailAt: rowsWithLeads[0]?.latestEmailAt ?? null,
-        activeMailboxesToday: rowsWithLeads.length,
+        latestEmailAt: scopedRows[0]?.latestEmailAt ?? null,
+        activeMailboxesToday: scopedRows.length,
       },
     };
   } catch {
